@@ -1,0 +1,3 @@
+ALTER TABLE "verification_jobs" ADD COLUMN "ecosystem" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "verification_jobs" ADD COLUMN "install_command" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "ai_runs_one_active_repository_unique" ON "ai_runs" USING btree ("repository_id") WHERE "ai_runs"."status" in ('PENDING_RESERVATION', 'QUEUED', 'READING_REPOSITORY', 'FINDING_APIS', 'RESEARCHING_APIS', 'PLANNING_CHANGES', 'UPDATING_CODE', 'VERIFYING', 'REPAIRING', 'CREATING_PR');

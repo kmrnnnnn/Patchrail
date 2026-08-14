@@ -1,0 +1,6 @@
+<svg viewBox="0 0 140 32" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Patchrail">
+  <g transform="translate(4 4)">
+    <path d="M3 6h6l3 3h9M3 18h6l3-3h9" stroke="#C97543" stroke-width="2.25" stroke-linecap="square" stroke-linejoin="miter"/>
+  </g>
+  <text x="38" y="23" fill="#121416" font-family="'Instrument Sans Variable', 'Instrument Sans', sans-serif" font-size="24" font-weight="600" letter-spacing="-0.576">Patchrail</text>
+</svg>

@@ -1,0 +1,19 @@
+packages:
+  - "."
+
+overrides:
+  "@esbuild-kit/core-utils>esbuild": 0.25.12
+
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - railway@3.9.0
+
+onlyBuiltDependencies:
+  - "@parcel/watcher"
+  - "better-sqlite3"
+  - "esbuild"
+  - "sharp"
+  - "unrs-resolver"
