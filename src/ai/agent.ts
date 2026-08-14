@@ -8,7 +8,12 @@ import type {
   Tool,
 } from "openai/resources/responses/responses";
 import { z } from "zod";
-import { calculateModelCost, totalModelCost, type ModelPricing } from "@/ai/cost";
+import {
+  calculateModelCost,
+  maximumModelPricingForInputLimit,
+  totalModelCost,
+  type ModelPricing,
+} from "@/ai/cost";
 import type { RepositoryMap, RepositoryWorkspace } from "@/ai/repository";
 import { validateMigrationOutcome, validateResearchCoverage } from "@/ai/validation";
 import type { AgentResult, ModelUsage } from "@/runs/types";
@@ -312,20 +317,25 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     const instructions = systemInstructions(options);
     const availableTools =
       remainingResearchCalls > 0 ? tools : tools.filter((tool) => tool.type !== "web_search");
-    // UTF-8 bytes are a conservative upper bound for tokenizer units. Include
-    // request schemas and protocol overhead so a call cannot outrun its token authorization.
-    const maximumInputTokens =
+    // UTF-8 bytes conservatively bound the serialized request itself. Hosted
+    // web-search content may add provider-reported input after this request, so
+    // the durable authorization below covers the full remaining run allowance.
+    const serializedRequestInputTokenBound =
       Buffer.byteLength(JSON.stringify(input)) +
       Buffer.byteLength(instructions) +
       Buffer.byteLength(JSON.stringify(availableTools)) +
       Buffer.byteLength(JSON.stringify(responseFormat)) +
       8_192;
-    if (maximumInputTokens > remainingInputTokens) {
+    if (serializedRequestInputTokenBound > remainingInputTokens) {
       throw new Error("AI input-token authorization is too small for another model call");
     }
+    const maximumTokenPricing = maximumModelPricingForInputLimit(
+      remainingInputTokens,
+      options.pricing,
+    );
     const inputCostReserve =
-      (maximumInputTokens / 1_000_000) *
-      Math.max(options.pricing.inputUsdPer1M, options.pricing.cachedInputUsdPer1M);
+      (remainingInputTokens / 1_000_000) *
+      Math.max(maximumTokenPricing.inputUsdPer1M, maximumTokenPricing.cachedInputUsdPer1M);
     const maximumToolCalls =
       remainingResearchCalls > 0
         ? Math.min(remainingResearchCalls, options.limits.maxWebSearchCallsPerResponse)
@@ -334,7 +344,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
       (remainingResearchCalls > 0 ? maximumToolCalls : 0) * options.pricing.webSearchUsdPerCall;
     const outputBudgetByCost = Math.floor(
       ((remainingCostUsd - inputCostReserve - webSearchCostReserve - 0.000001) * 1_000_000) /
-        options.pricing.outputUsdPer1M,
+        maximumTokenPricing.outputUsdPer1M,
     );
     const outputTokenCap = Math.min(remainingOutputTokens, outputBudgetByCost);
     const minimumUsefulOutputTokens = options.repairDiagnostics ? 1_000 : 2_000;
@@ -347,7 +357,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     }
     const maximumCallCostUsd = roundCostUpToMicros(
       inputCostReserve +
-        (outputTokenCap / 1_000_000) * options.pricing.outputUsdPer1M +
+        (outputTokenCap / 1_000_000) * maximumTokenPricing.outputUsdPer1M +
         webSearchCostReserve,
     );
     const pendingCallId = `pending:${crypto.randomUUID()}`;
@@ -426,7 +436,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
       createdAt: new Date().toISOString(),
     };
     if (
-      inputTokens > maximumInputTokens ||
+      inputTokens > remainingInputTokens ||
       outputTokens > outputTokenCap ||
       webCallsThisResponse.length > (remainingResearchCalls > 0 ? maximumToolCalls : 0) ||
       estimatedCostUsd > maximumCallCostUsd + 0.000001

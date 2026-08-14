@@ -60,13 +60,15 @@ Required categories are:
 
 - Core web: `DATABASE_URL`, canonical `APP_URL`, and a random `AUTH_SECRET` of at least 32 characters. Production `APP_URL` must be the generated HTTPS origin with no path, query, or fragment.
 - GitHub login and repository access: `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_PRIVATE_KEY`, and `GITHUB_WEBHOOK_SECRET`.
-- Live AI: `OPENAI_API_KEY`, `OPENAI_MODEL`, all four positive pricing fields, and the `AI_MAX_*` / web-search limits. Copy current prices for the selected model and hosted web-search tool from the [official OpenAI pricing page](https://openai.com/api/pricing/); Patchrail deliberately refuses missing or zero pricing rather than undercounting cost.
+- Live AI: `OPENAI_API_KEY`, `OPENAI_MODEL`, all standard and long-context pricing fields, and the `AI_MAX_*` / web-search limits. Copy current prices and the long-context threshold for the selected model from its official model page, plus the hosted-tool fee from the [official OpenAI pricing page](https://developers.openai.com/api/docs/pricing); Patchrail deliberately refuses missing or zero pricing rather than undercounting cost.
 - Plans: repository limits and FREE/PRO AI budgets. The FREE grant is one lifetime trial per user and is not recreated by deleting a workspace.
 - Billing: matching-mode `STRIPE_SECRET_KEY` and `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, plus `STRIPE_WEBHOOK_SECRET`, deployment-specific `STRIPE_ACCOUNT_KEY`, and `STRIPE_PRO_LOOKUP_KEY`.
 - Verification: choose exactly one mode described below. Keep CPU, memory, timeout, lease, and concurrency limits conservative for the host.
 - Worker: `WORKER_POLL_INTERVAL_MS`, `WORKER_CONCURRENCY`, and `WORKER_STALE_AFTER_MINUTES`; defaults are suitable for the first deployment.
 
 Use independent secrets per environment. Generate secrets in an operator terminal or secret manager and place them directly in local secret storage or Railway Variables; do not send them through chat or commit them.
+
+For the example `gpt-5.6-terra` model, the [official model page](https://developers.openai.com/api/docs/models/gpt-5.6-terra) listed the following values when this release was prepared: standard input `$2.00`, cached input `$0.20`, and output `$12.00` per 1M tokens; a `272000` input-token threshold; and long-context input `$4.00`, cached input `$0.40`, and output `$18.00` per 1M tokens. The web-search tool was `$0.01` per call, with retrieved search-content tokens additionally billed at model rates. Re-check both official pages immediately before setting the operator-owned variables; these rates are documented here for deployment guidance and are never compiled into the application.
 
 ## GitHub App setup
 
@@ -121,11 +123,14 @@ Set:
 VERIFICATION_MODE=railway_sandbox
 RAILWAY_ENVIRONMENT_ID=<production environment ID>
 RAILWAY_TOKEN=<project-scoped token>
+RAILWAY_SANDBOX_IDLE_TIMEOUT_MINUTES=5
 ```
 
 `RAILWAY_API_TOKEN` is supported as a fallback, but a project-scoped `RAILWAY_TOKEN` has the smaller blast radius. Enable [**Priority Boarding**](https://docs.railway.com/platform/priority-boarding) under Railway account Feature Flags before deployment; Sandboxes and their TypeScript SDK are currently beta. Both a token and environment ID are required.
 
-The worker creates an `ISOLATED` disposable Sandbox for each verification attempt, uploads only the bounded repository archive, patch, commands, and resource limits, and destroys the VM afterward. The sandbox has public NAT egress but cannot access the Railway project's private network. It receives no Patchrail infrastructure secrets.
+Create the project token for the same Railway project/environment that owns the worker and put it directly in that environment's `RAILWAY_TOKEN` variable. Do not paste an account token into chat or expose either token as a public variable.
+
+The worker creates an `ISOLATED` disposable Sandbox for each verification attempt, builds or reuses a content-addressed SDK template containing Debian's `docker.io` engine and `docker-cli` packages, starts its private Docker daemon with a bounded readiness check, uploads only the bounded repository archive, patch, commands, and resource limits, and destroys the VM afterward. The sandbox has public NAT egress but cannot access the Railway project's private network. It receives no Patchrail infrastructure secrets. Keep the idle timeout within the limit of the Railway plan; Trial currently accepts `1`–`5` minutes, so the production-safe default is `5`.
 
 ### External Docker runner
 

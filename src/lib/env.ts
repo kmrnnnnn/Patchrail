@@ -84,6 +84,10 @@ export const aiEnvSchema = z.object({
   // Pricing is deliberately operator-supplied rather than hardcoded because
   // model and hosted-tool rates are volatile. Zero would silently undercount.
   OPENAI_CACHED_INPUT_USD_PER_1M: positiveNumber,
+  OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS: positiveInt,
+  OPENAI_LONG_CONTEXT_INPUT_USD_PER_1M: positiveNumber,
+  OPENAI_LONG_CONTEXT_CACHED_INPUT_USD_PER_1M: positiveNumber,
+  OPENAI_LONG_CONTEXT_OUTPUT_USD_PER_1M: positiveNumber,
   OPENAI_WEB_SEARCH_USD_PER_CALL: positiveNumber,
   OPENAI_MAX_WEB_SEARCH_CALLS_PER_RESPONSE: positiveInt.default(4),
   AI_MAX_RUN_COST_USD: positiveNumber,
@@ -125,6 +129,7 @@ export const verificationEnvSchema = z
       RAILWAY_ENVIRONMENT_ID: z.string().min(1),
       RAILWAY_TOKEN: z.string().min(1).optional(),
       RAILWAY_API_TOKEN: z.string().min(1).optional(),
+      RAILWAY_SANDBOX_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().min(1).max(120).default(5),
     }),
   ])
   .superRefine((configuration, context) => {

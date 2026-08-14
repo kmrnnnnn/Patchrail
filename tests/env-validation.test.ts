@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commonEnvSchema, verificationEnvSchema } from "@/lib/env";
+import { aiEnvSchema, commonEnvSchema, verificationEnvSchema } from "@/lib/env";
 
 describe("environment validation", () => {
   it("rejects malformed and non-PostgreSQL database URLs without throwing", () => {
@@ -42,13 +42,49 @@ describe("environment validation", () => {
         RAILWAY_ENVIRONMENT_ID: "environment",
       }).success,
     ).toBe(false);
+    const railwayConfiguration = verificationEnvSchema.safeParse({
+      VERIFICATION_MODE: "railway_sandbox",
+      RAILWAY_ENVIRONMENT_ID: "environment",
+      RAILWAY_TOKEN: "project-token",
+    });
+    expect(railwayConfiguration.success).toBe(true);
+    if (!railwayConfiguration.success) throw new Error("Expected valid Railway configuration");
+    if (railwayConfiguration.data.VERIFICATION_MODE !== "railway_sandbox") {
+      throw new Error("Expected Railway Sandbox configuration");
+    }
+    expect(railwayConfiguration.data.RAILWAY_SANDBOX_IDLE_TIMEOUT_MINUTES).toBe(5);
     expect(
       verificationEnvSchema.safeParse({
         VERIFICATION_MODE: "railway_sandbox",
         RAILWAY_ENVIRONMENT_ID: "environment",
         RAILWAY_TOKEN: "project-token",
+        RAILWAY_SANDBOX_IDLE_TIMEOUT_MINUTES: 121,
       }).success,
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("requires operator-supplied standard and long-context AI pricing", () => {
+    const configuration = {
+      OPENAI_API_KEY: "key",
+      OPENAI_MODEL: "model",
+      OPENAI_INPUT_USD_PER_1M: 2,
+      OPENAI_CACHED_INPUT_USD_PER_1M: 0.2,
+      OPENAI_OUTPUT_USD_PER_1M: 12,
+      OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS: 272_000,
+      OPENAI_LONG_CONTEXT_INPUT_USD_PER_1M: 4,
+      OPENAI_LONG_CONTEXT_CACHED_INPUT_USD_PER_1M: 0.4,
+      OPENAI_LONG_CONTEXT_OUTPUT_USD_PER_1M: 18,
+      OPENAI_WEB_SEARCH_USD_PER_CALL: 0.01,
+      AI_MAX_RUN_COST_USD: 5,
+    };
+
+    expect(aiEnvSchema.safeParse(configuration).success).toBe(true);
+    expect(
+      aiEnvSchema.safeParse({
+        ...configuration,
+        OPENAI_LONG_CONTEXT_OUTPUT_USD_PER_1M: undefined,
+      }).success,
+    ).toBe(false);
   });
 
   it("allows an external runner only at an HTTPS origin or loopback HTTP", () => {
