@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
-import { ArrowRight, Github, Lock, Search, Unlock } from "lucide-react";
+import { ArrowRight, Lock, Search, Unlock } from "lucide-react";
 import Link from "next/link";
 import { ConnectGitHubButton } from "@/components/connect-github-button";
+import {
+  GitHubInstallationRecovery,
+  RefreshGitHubButton,
+} from "@/components/refresh-github-button";
 
 import {
   Button,
@@ -14,6 +18,7 @@ import {
   SubmitButton,
 } from "@/components/ui";
 import { formatRelativeDate, shortSha } from "@/lib/format";
+import { hasLinkedGitHubInstallation } from "@/github/reconciliation";
 import { getConfigurationStatus } from "@/lib/env";
 import { getRepositoriesWithLatestRun } from "@/server/queries";
 import { enableRepositoryAction } from "@/server/repositories";
@@ -35,6 +40,7 @@ export default async function RepositoriesPage({
 }) {
   const { workspace } = await getWorkspaceContext();
   const configuration = getConfigurationStatus();
+  const hasInstallation = await hasLinkedGitHubInstallation(workspace.id);
   const repositories = await getRepositoriesWithLatestRun(workspace.id);
   const query = (await searchParams).q?.trim().toLowerCase() ?? "";
   const filtered = query
@@ -45,13 +51,16 @@ export default async function RepositoriesPage({
     <div className="product-page">
       <PageHeader
         actions={
-          configuration.github ? (
-            <ConnectGitHubButton variant="outline">
-              <Github aria-hidden="true" size={16} /> Add GitHub installation
-            </ConnectGitHubButton>
+          configuration.github && hasInstallation ? (
+            <div className="integration-actions">
+              <RefreshGitHubButton variant="outline" />
+              <ButtonLink href="/app/settings/integrations" variant="outline">
+                Manage GitHub access
+              </ButtonLink>
+            </div>
           ) : (
             <ButtonLink href="/app/settings/integrations" variant="outline">
-              View required setup
+              GitHub integration
             </ButtonLink>
           )
         }
@@ -80,8 +89,15 @@ export default async function RepositoriesPage({
         <Card>
           <EmptyState
             action={
-              configuration.github ? (
-                <ConnectGitHubButton>Grant repository access</ConnectGitHubButton>
+              configuration.github && hasInstallation ? (
+                <ButtonLink href="/app/settings/integrations">Manage GitHub access</ButtonLink>
+              ) : configuration.github ? (
+                <GitHubInstallationRecovery>
+                  <div className="integration-actions">
+                    <RefreshGitHubButton variant="outline" />
+                    <ConnectGitHubButton>Grant repository access</ConnectGitHubButton>
+                  </div>
+                </GitHubInstallationRecovery>
               ) : (
                 <ButtonLink href="/app/settings/integrations">View required setup</ButtonLink>
               )

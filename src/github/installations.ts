@@ -10,6 +10,11 @@ import { createInstallationState, hashInstallationState } from "@/github/securit
 const INSTALL_STATE_TTL_MS = 10 * 60 * 1_000;
 const UPSERT_BATCH_SIZE = 100;
 
+function githubStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error)) return undefined;
+  return typeof error.status === "number" ? error.status : undefined;
+}
+
 type GitHubInstallation = Awaited<
   ReturnType<ReturnType<typeof getAppOctokit>["rest"]["apps"]["getInstallation"]>
 >["data"];
@@ -184,9 +189,25 @@ export async function syncInstallationRepositories(input: {
     );
   }
   const appOctokit = getAppOctokit();
-  const { data: remoteInstallation } = await appOctokit.rest.apps.getInstallation({
-    installation_id: installation.githubInstallationId,
-  });
+  let remoteInstallation: GitHubInstallation;
+  try {
+    ({ data: remoteInstallation } = await appOctokit.rest.apps.getInstallation({
+      installation_id: installation.githubInstallationId,
+    }));
+  } catch (error) {
+    if (githubStatus(error) === 404) {
+      await setInstallationAvailability({
+        githubInstallationId: installation.githubInstallationId,
+        state: "DELETED",
+      });
+      throw new GitHubIntegrationError(
+        "GitHub App access was revoked. Reconnect the installation to restore repository access.",
+        "INSTALLATION_REVOKED",
+        410,
+      );
+    }
+    throw error;
+  }
   const remoteAccount = accountDetails(remoteInstallation);
   if (remoteInstallation.suspended_at) {
     const suspendedAt = new Date(remoteInstallation.suspended_at);

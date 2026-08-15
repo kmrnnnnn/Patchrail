@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { ArrowLeft, Check, GitBranch, Github, LockKeyhole } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { connection } from "next/server";
 
 import { Brand } from "@/components/brand";
 import { getConfigurationStatus } from "@/lib/env";
 import { getConfiguredAppOrigin } from "@/security/request";
+import { getSession } from "@/server/session";
 
 import { GitHubLoginButton } from "./login-button";
 
@@ -17,6 +19,8 @@ export const metadata: Metadata = {
 
 export default async function LoginPage() {
   await connection();
+  if (await getSession()) redirect("/app");
+
   const authenticationAvailable =
     getConfiguredAppOrigin() !== null && getConfigurationStatus().auth;
 

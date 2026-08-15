@@ -1,14 +1,17 @@
 import "server-only";
 
 import { auth } from "@/auth/auth";
-import { requireAccessibleInstallation } from "@/github/authorization-policy";
+import {
+  accessibleInstallationIdsForApp,
+  requireAccessibleInstallation,
+} from "@/github/authorization-policy";
 import { getGitHubUserOctokit } from "@/github/client";
 import { GitHubIntegrationError } from "@/github/errors";
 import { readGithubAppEnv } from "@/lib/env";
 
 function userAuthorizationRequired(): GitHubIntegrationError {
   return new GitHubIntegrationError(
-    "Sign in with the same GitHub App before connecting repository access",
+    "GitHub login must use this same GitHub App before Patchrail can discover installations. Sign out and sign in again after the App OAuth credentials are configured.",
     "GITHUB_USER_AUTHORIZATION_REQUIRED",
     409,
   );
@@ -40,9 +43,26 @@ export async function requireInstallationAccessibleToSignedInUser(input: {
   requestHeaders: Headers;
   githubInstallationId: number;
 }): Promise<void> {
-  const accessToken = await getSignedInGitHubUserAccessToken(input.requestHeaders);
+  const accessibleInstallationIds = await listInstallationsAccessibleToSignedInUser(
+    input.requestHeaders,
+  );
+  if (accessibleInstallationIds.includes(input.githubInstallationId)) return;
+
+  requireAccessibleInstallation([], input.githubInstallationId, readGithubAppEnv().GITHUB_APP_ID);
+}
+
+/**
+ * Lists installation IDs owned or otherwise accessible to the signed-in user.
+ * The GitHub App user token is deliberately confined to ownership discovery;
+ * repository reads and writes continue to use installation access tokens.
+ */
+export async function listInstallationsAccessibleToSignedInUser(
+  requestHeaders: Headers,
+): Promise<number[]> {
+  const accessToken = await getSignedInGitHubUserAccessToken(requestHeaders);
   const octokit = getGitHubUserOctokit(accessToken);
   const appId = readGithubAppEnv().GITHUB_APP_ID;
+  const installationIds = new Set<number>();
 
   try {
     const pages = octokit.paginate.iterator(
@@ -50,14 +70,8 @@ export async function requireInstallationAccessibleToSignedInUser(input: {
       { per_page: 100 },
     );
     for await (const response of pages) {
-      if (
-        response.data.some(
-          (installation) =>
-            installation.id === input.githubInstallationId && installation.app_id === appId,
-        )
-      ) {
-        requireAccessibleInstallation(response.data, input.githubInstallationId, appId);
-        return;
+      for (const installationId of accessibleInstallationIdsForApp(response.data, appId)) {
+        installationIds.add(installationId);
       }
     }
   } catch (error) {
@@ -67,5 +81,5 @@ export async function requireInstallationAccessibleToSignedInUser(input: {
     throw userAuthorizationRequired();
   }
 
-  requireAccessibleInstallation([], input.githubInstallationId, appId);
+  return [...installationIds];
 }

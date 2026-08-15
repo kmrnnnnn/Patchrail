@@ -1,7 +1,9 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
+  accessibleInstallationIdsForApp,
   hasAccessibleInstallation,
+  personalInstallationIdsForGitHubAccount,
   requireAccessibleInstallation,
 } from "@/github/authorization-policy";
 import {
@@ -20,6 +22,59 @@ describe("GitHub installation authorization", () => {
   it("accepts only an installation returned for the signed-in user and this GitHub App", () => {
     expect(hasAccessibleInstallation(accessible, 42, appId)).toBe(true);
     expect(() => requireAccessibleInstallation(accessible, 42, appId)).not.toThrow();
+  });
+
+  it("discovers only unique, safe installation IDs for the configured app", () => {
+    expect(
+      accessibleInstallationIdsForApp(
+        [
+          ...accessible,
+          { id: 42, app_id: appId },
+          { id: 99, app_id: 8 },
+          { id: Number.MAX_SAFE_INTEGER + 1, app_id: appId },
+          { id: 0, app_id: appId },
+        ],
+        appId,
+      ),
+    ).toEqual([10, 42]);
+    expect(accessibleInstallationIdsForApp(accessible, 0)).toEqual([]);
+  });
+
+  it("recovers only an exact, active personal installation for the GitHub account", () => {
+    const candidates = [
+      {
+        id: 50,
+        app_id: appId,
+        target_type: "User",
+        account: { id: 1234 },
+        suspended_at: null,
+      },
+      {
+        id: 51,
+        app_id: appId,
+        target_type: "Organization",
+        account: { id: 1234 },
+        suspended_at: null,
+      },
+      {
+        id: 52,
+        app_id: appId,
+        target_type: "User",
+        account: { id: 9999 },
+        suspended_at: null,
+      },
+      {
+        id: 53,
+        app_id: appId,
+        target_type: "User",
+        account: { id: 1234 },
+        suspended_at: "2026-08-15T00:00:00Z",
+      },
+    ];
+
+    expect(personalInstallationIdsForGitHubAccount(candidates, appId, "1234")).toEqual([50]);
+    expect(personalInstallationIdsForGitHubAccount(candidates, appId, "9998")).toEqual([]);
+    expect(personalInstallationIdsForGitHubAccount(candidates, appId, "01234")).toEqual([]);
   });
 
   it("rejects a spoofed setup URL installation ID", () => {

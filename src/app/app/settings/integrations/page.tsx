@@ -1,8 +1,12 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { CheckCircle2, Github, KeyRound, LockKeyhole, Plus } from "lucide-react";
+import { CheckCircle2, Github, KeyRound, LockKeyhole } from "lucide-react";
 import type { Metadata } from "next";
 import { IntegrationActions } from "@/components/integration-actions";
 import { ConnectGitHubButton } from "@/components/connect-github-button";
+import {
+  GitHubInstallationRecovery,
+  RefreshGitHubButton,
+} from "@/components/refresh-github-button";
 import { Card, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { db } from "@/db/client";
 import { githubInstallations, repositories } from "@/db/schema";
@@ -12,18 +16,23 @@ import { getWorkspaceContext } from "@/server/session";
 
 export const metadata: Metadata = { title: "GitHub integration" };
 
-export default async function IntegrationsPage() {
-  const { session, workspace } = await getWorkspaceContext();
-  const installations = await db
+async function loadInstallations(workspaceId: string) {
+  return db
     .select()
     .from(githubInstallations)
     .where(
       and(
-        eq(githubInstallations.workspaceId, workspace.id),
+        eq(githubInstallations.workspaceId, workspaceId),
         isNull(githubInstallations.disconnectedAt),
       ),
     )
     .orderBy(desc(githubInstallations.createdAt));
+}
+
+export default async function IntegrationsPage() {
+  const { session, workspace } = await getWorkspaceContext();
+  const configuration = getConfigurationStatus();
+  const installations = await loadInstallations(workspace.id);
   const repositoryCounts = await Promise.all(
     installations.map(async (installation) => ({
       id: installation.id,
@@ -41,7 +50,6 @@ export default async function IntegrationsPage() {
     })),
   );
   const counts = new Map(repositoryCounts.map((item) => [item.id, item.count]));
-  const configuration = getConfigurationStatus();
   const activeInstallations = installations.filter((installation) => !installation.suspendedAt);
 
   return (
@@ -50,13 +58,6 @@ export default async function IntegrationsPage() {
         eyebrow="Settings"
         title="GitHub integration"
         description="Your GitHub login identifies you. A separate GitHub App authorization grants scoped repository access and creates Draft PRs."
-        actions={
-          configuration.github ? (
-            <ConnectGitHubButton>
-              <Plus size={16} /> Connect installation
-            </ConnectGitHubButton>
-          ) : undefined
-        }
       />
       <div className="identity-separation">
         <Card>
@@ -123,7 +124,12 @@ export default async function IntegrationsPage() {
               description="Select exactly which repositories Patchrail may read and update. Login and repository authorization remain separate."
               action={
                 configuration.github ? (
-                  <ConnectGitHubButton>Connect GitHub</ConnectGitHubButton>
+                  <GitHubInstallationRecovery>
+                    <div className="integration-actions">
+                      <RefreshGitHubButton variant="outline" />
+                      <ConnectGitHubButton>Connect GitHub</ConnectGitHubButton>
+                    </div>
+                  </GitHubInstallationRecovery>
                 ) : undefined
               }
             />

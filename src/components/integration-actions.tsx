@@ -34,8 +34,12 @@ export function IntegrationActions({
         { method: action === "refresh" ? "POST" : "DELETE" },
       );
       if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
         setError(body.error ?? "GitHub action failed");
+        if (response.status === 410 || body.code === "INSTALLATION_REVOKED") router.refresh();
       } else {
         router.refresh();
       }
