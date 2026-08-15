@@ -75,6 +75,22 @@ describe("billing cost policy", () => {
     ).toMatchObject({ spentMicros: 4_125_000, reservedMicros: 0 });
   });
 
+  it("settles a conservative in-flight hold when the provider rejects a request", () => {
+    const accounting = calculateReservationAccounting({
+      status: "SETTLED",
+      authorizedUsd: "3.000000",
+      incurredUsd: "1.990000",
+    });
+
+    expect(accounting).toMatchObject({
+      authorizedMicros: 3_000_000,
+      incurredMicros: 1_990_000,
+      spentMicros: 1_990_000,
+      reservedMicros: 0,
+    });
+    expect(accounting.authorizedMicros - accounting.spentMicros).toBe(1_010_000);
+  });
+
   it("counts prior provider-boundary spend once and bounds a fresh run to the remainder", () => {
     const failedRun = calculateReservationAccounting({
       status: "SETTLED",

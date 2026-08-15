@@ -3,7 +3,6 @@ import type {
   ParsedResponseFunctionToolCall,
   ResponseFunctionToolCall,
   ResponseInput,
-  ResponseInputItem,
   Tool,
 } from "openai/resources/responses/responses";
 import { z } from "zod";
@@ -15,6 +14,7 @@ import {
 } from "@/ai/cost";
 import type { RepositoryMap, RepositoryWorkspace } from "@/ai/repository";
 import { openAiStrictJsonSchema, openAiTextFormat } from "@/ai/structured-output";
+import { buildToolContinuation, type FunctionCallResult } from "@/ai/tool-continuation";
 import { validateMigrationOutcome, validateResearchCoverage } from "@/ai/validation";
 import type { AgentResult, ModelUsage } from "@/runs/types";
 import { agentResultSchema } from "@/runs/types";
@@ -213,7 +213,10 @@ Evidence rules:
 Cost/tool discipline: use the cheap initial map first, request only relevant file content, and finish within bounded calls. The GitHub token and infrastructure credentials are not available to you and must never be requested.`;
 }
 
-async function executeFunctionCall(workspace: RepositoryWorkspace, call: ResponseFunctionToolCall) {
+export async function executeRepositoryFunctionCall(
+  workspace: RepositoryWorkspace,
+  call: ResponseFunctionToolCall,
+) {
   switch (call.name) {
     case "list_tree": {
       const input = listTreeArguments.parse(JSON.parse(call.arguments));
@@ -508,10 +511,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
       return { result: normalized, usage, consultedUrls: [...consultedUrls] };
     }
 
-    // The SDK's parsed output union includes a failed computer-call status that its
-    // input union currently omits. Patchrail never enables computer tools, so this
-    // stateless replay cast is constrained to function, reasoning, and web items.
-    input.push(...(response.output as unknown as ResponseInputItem[]));
+    const functionResults: FunctionCallResult[] = [];
     for (const call of functionCalls) {
       const isMutation = call.name === "apply_patch";
       await options.onProgress({
@@ -522,18 +522,19 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
         details: { tool: call.name },
       });
 
-      let output: string;
+      let value: unknown;
       try {
-        const result = await executeFunctionCall(options.workspace, call);
-        output = JSON.stringify({ ok: true, result });
+        const result = await executeRepositoryFunctionCall(options.workspace, call);
+        value = { ok: true, result };
       } catch (error) {
-        output = JSON.stringify({
+        value = {
           ok: false,
           error: error instanceof Error ? error.message : "Repository tool failed",
-        });
+        };
       }
-      input.push({ type: "function_call_output", call_id: call.call_id, output });
+      functionResults.push({ callId: call.call_id, value });
     }
+    input.push(...buildToolContinuation(response.output, functionResults));
   }
 
   throw new Error("AI model-call limit reached before a structured result was produced");
