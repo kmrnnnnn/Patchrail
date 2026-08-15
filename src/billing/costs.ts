@@ -952,10 +952,7 @@ async function getReservationTotals(
   workspaceId: string,
   period: BillingPeriod,
 ): Promise<{ spentUsd: string; reservedUsd: string }> {
-  const accountedAt = sql<Date>`coalesce(${costReservations.settledAt}, ${costReservations.createdAt})`;
-  const inPeriod = period.end
-    ? and(gte(accountedAt, period.start), lt(accountedAt, period.end))
-    : gte(accountedAt, period.start);
+  const inPeriod = reservationAccountedInPeriod(period);
 
   const [row] = await executor
     .select({
@@ -982,10 +979,7 @@ export async function getUsageSummary(workspaceId: string): Promise<UsageSummary
   if (!account) throw new BillingError("BILLING_STATE_CONFLICT", "Billing account is missing.");
 
   const period = getBillingPeriod(account);
-  const accountedAt = sql<Date>`coalesce(${costReservations.settledAt}, ${costReservations.createdAt})`;
-  const accountedInPeriod = period.end
-    ? and(gte(accountedAt, period.start), lt(accountedAt, period.end))
-    : gte(accountedAt, period.start);
+  const accountedInPeriod = reservationAccountedInPeriod(period);
 
   const rows = await db
     .select({
@@ -1019,12 +1013,7 @@ export async function getUsageSummary(workspaceId: string): Promise<UsageSummary
     .where(
       and(
         eq(costReservations.workspaceId, workspaceId),
-        or(
-          eq(costReservations.status, "RESERVED"),
-          period.end
-            ? and(gte(accountedAt, period.start), lt(accountedAt, period.end))
-            : gte(accountedAt, period.start),
-        ),
+        or(eq(costReservations.status, "RESERVED"), reservationAccountedInPeriod(period)),
       ),
     );
   const spentMicros = usdToMicros(totals?.spentUsd ?? "0");
@@ -1071,6 +1060,22 @@ export async function getUsageSummary(workspaceId: string): Promise<UsageSummary
       };
     }),
   };
+}
+
+/**
+ * A computed SQL expression does not carry a Drizzle column encoder. Bind each
+ * period boundary through a real timestamptz column so postgres-js receives an
+ * ISO string rather than an unencoded JavaScript Date.
+ */
+function reservationAccountedInPeriod(period: BillingPeriod) {
+  const accountedAt = sql<Date>`coalesce(${costReservations.settledAt}, ${costReservations.createdAt})`;
+  const start = sql.param(period.start, costReservations.createdAt);
+  return period.end
+    ? and(
+        gte(accountedAt, start),
+        lt(accountedAt, sql.param(period.end, costReservations.createdAt)),
+      )
+    : gte(accountedAt, start);
 }
 
 export async function getWorkspacePlan(workspaceId: string): Promise<PlanDefinition> {

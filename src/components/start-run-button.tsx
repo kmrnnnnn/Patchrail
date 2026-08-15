@@ -6,6 +6,33 @@ import { useState } from "react";
 import { Button, Dialog, DialogClose } from "@/components/ui";
 import { formatUsd } from "@/lib/format";
 
+type StartRunResponse = { runId?: string; error?: string; code?: string };
+
+export async function readStartRunResponse(response: Response): Promise<StartRunResponse | null> {
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType !== "application/json" && !mediaType?.endsWith("+json")) return null;
+
+  const text = await response.text();
+  if (!text.trim()) return null;
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const value = parsed as Record<string, unknown>;
+    return {
+      ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
+      ...(typeof value.error === "string" ? { error: value.error } : {}),
+      ...(typeof value.code === "string" ? { code: value.code } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function unexpectedResponseMessage(response: Response): string {
+  return `Patchrail returned an unexpected response (HTTP ${response.status}). Refresh this repository before trying again.`;
+}
+
 export function StartRunButton({
   repositoryId,
   maximumCostUsd,
@@ -28,8 +55,11 @@ export function StartRunButton({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ repositoryId }),
       });
-      const body = (await response.json()) as { runId?: string; error?: string };
-      if (!response.ok || !body.runId) throw new Error(body.error ?? "Could not start the update");
+      const body = await readStartRunResponse(response);
+      if (!body) throw new Error(unexpectedResponseMessage(response));
+      if (!response.ok || !body.runId) {
+        throw new Error(body.error ?? unexpectedResponseMessage(response));
+      }
       router.push(`/app/runs/${body.runId}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not start the update");

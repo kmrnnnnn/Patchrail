@@ -1,4 +1,7 @@
+import { gte, sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
+import { costReservations } from "@/db/schema";
 import {
   calculateBudgetAvailability,
   calculateReservationAccounting,
@@ -9,6 +12,14 @@ import {
 } from "@/billing/cost-policy";
 
 describe("billing cost policy", () => {
+  it("encodes computed timestamp boundaries before postgres binding", () => {
+    const boundary = new Date("2026-08-15T13:26:45.614Z");
+    const accountedAt = sql<Date>`coalesce(${costReservations.settledAt}, ${costReservations.createdAt})`;
+    const condition = gte(accountedAt, sql.param(boundary, costReservations.createdAt));
+
+    expect(new PgDialect().sqlToQuery(condition).params).toEqual([boundary.toISOString()]);
+  });
+
   it("calculates remaining budget in integer micro-dollars", () => {
     expect(
       calculateBudgetAvailability({
