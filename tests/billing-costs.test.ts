@@ -3,6 +3,7 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import { costReservations } from "@/db/schema";
 import {
+  calculateBoundedRunReservation,
   calculateBudgetAvailability,
   calculateReservationAccounting,
   microsToUsd,
@@ -72,6 +73,40 @@ describe("billing cost policy", () => {
         incurredUsd: "4.125000",
       }),
     ).toMatchObject({ spentMicros: 4_125_000, reservedMicros: 0 });
+  });
+
+  it("counts prior provider-boundary spend once and bounds a fresh run to the remainder", () => {
+    const failedRun = calculateReservationAccounting({
+      status: "SETTLED",
+      authorizedUsd: "5.000000",
+      incurredUsd: "2.000000",
+    });
+    const freshRun = calculateBoundedRunReservation({
+      budgetUsd: "5.000000",
+      spentUsd: microsToUsd(failedRun.spentMicros),
+      reservedUsd: microsToUsd(failedRun.reservedMicros),
+      ceilingUsd: "5.000000",
+    });
+
+    expect(freshRun).toMatchObject({
+      spentMicros: 2_000_000,
+      ceilingMicros: 5_000_000,
+      amountMicros: 3_000_000,
+      remainingAfterMicros: 0,
+      allowed: true,
+    });
+    expect(failedRun.spentMicros + freshRun.amountMicros).toBe(freshRun.budgetMicros);
+  });
+
+  it("does not create a bounded authorization when the workspace budget is exhausted", () => {
+    expect(
+      calculateBoundedRunReservation({
+        budgetUsd: "5.000000",
+        spentUsd: "2.000000",
+        reservedUsd: "3.000000",
+        ceilingUsd: "5.000000",
+      }),
+    ).toMatchObject({ amountMicros: 0, remainingAfterMicros: 0, allowed: false });
   });
 
   it("prevents a resumed run from decreasing already-incurred cost", () => {

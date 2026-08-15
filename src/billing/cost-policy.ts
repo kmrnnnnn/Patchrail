@@ -9,6 +9,13 @@ export type BudgetCalculation = {
   allowed: boolean;
 };
 
+export type BoundedRunReservation = Omit<BudgetCalculation, "requestedMicros" | "allowed"> & {
+  ceilingMicros: number;
+  amountMicros: number;
+  remainingAfterMicros: number;
+  allowed: boolean;
+};
+
 export type ReservationAccounting = {
   authorizedMicros: number;
   incurredMicros: number;
@@ -57,6 +64,36 @@ export function calculateBudgetAvailability(input: {
     remainingMicros,
     requestedMicros,
     allowed: requestedMicros > 0 && requestedMicros <= remainingMicros,
+  };
+}
+
+/**
+ * Treats the configured per-run amount as a ceiling. A run may consume the
+ * workspace's smaller remaining allowance, but can never exceed either bound.
+ */
+export function calculateBoundedRunReservation(input: {
+  budgetUsd: string | number;
+  spentUsd: string | number;
+  reservedUsd: string | number;
+  ceilingUsd: string | number;
+}): BoundedRunReservation {
+  const availability = calculateBudgetAvailability({
+    budgetUsd: input.budgetUsd,
+    spentUsd: input.spentUsd,
+    reservedUsd: input.reservedUsd,
+    requestedUsd: input.ceilingUsd,
+  });
+  const amountMicros = Math.min(availability.requestedMicros, availability.remainingMicros);
+
+  return {
+    budgetMicros: availability.budgetMicros,
+    spentMicros: availability.spentMicros,
+    reservedMicros: availability.reservedMicros,
+    remainingMicros: availability.remainingMicros,
+    ceilingMicros: availability.requestedMicros,
+    amountMicros,
+    remainingAfterMicros: availability.remainingMicros - amountMicros,
+    allowed: amountMicros > 0,
   };
 }
 

@@ -11,6 +11,7 @@ import {
 import { BillingError } from "@/billing/errors";
 import { getWorkspaceFreeTrialBudgetUsd } from "@/billing/free-trial";
 import {
+  calculateBoundedRunReservation,
   calculateBudgetAvailability,
   calculateReservationAccounting,
   microsToUsd,
@@ -25,6 +26,7 @@ import type { PlanDefinition, UsageSummary } from "@/billing/types";
 import type { ModelUsage } from "@/runs/types";
 
 export {
+  calculateBoundedRunReservation,
   calculateBudgetAvailability,
   calculateReservationAccounting,
   microsToUsd,
@@ -113,21 +115,21 @@ export async function createQueuedRunWithReservation(input: {
       input.workspaceId,
       getBillingPeriod(account),
     );
-    const availability = calculateBudgetAvailability({
+    const reservation = calculateBoundedRunReservation({
       budgetUsd: account.aiBudgetUsd,
       spentUsd: totals.spentUsd,
       reservedUsd: totals.reservedUsd,
-      requestedUsd: input.amountUsd,
+      ceilingUsd: input.amountUsd,
     });
-    if (!availability.allowed) {
+    if (!reservation.allowed) {
       throw new BillingError(
         "BUDGET_EXCEEDED",
-        `This run needs up to ${microsToUsd(requestedMicros)} USD, but only ${microsToUsd(availability.remainingMicros)} USD remains in the AI budget.`,
+        `This run needs up to ${microsToUsd(requestedMicros)} USD, but only ${microsToUsd(reservation.remainingMicros)} USD remains in the AI budget.`,
         402,
       );
     }
 
-    const amountUsd = microsToUsd(requestedMicros);
+    const amountUsd = microsToUsd(reservation.amountMicros);
     const [run] = await transaction
       .insert(aiRuns)
       .values({

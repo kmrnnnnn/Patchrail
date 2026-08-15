@@ -23,6 +23,7 @@ import { readAiEnv } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { stableJson } from "@/lib/stable-json";
 import { appendClaimedRunEvent, transitionRun } from "@/runs/events";
+import { classifyRunError, VerificationInfrastructureError } from "@/runs/error-metadata";
 import type { AgentResult, ChangedFilePayload, ModelUsage, VerificationResult } from "@/runs/types";
 import { isUpdateRequired } from "@/runs/types";
 import { boundedLog } from "@/security/redaction";
@@ -34,30 +35,6 @@ type AiConfiguration = ReturnType<typeof readAiEnv>;
 
 function toCostString(value: number): string {
   return value.toFixed(6);
-}
-
-function errorMetadata(error: unknown, stage: string): { code: string; message: string } {
-  const message = error instanceof Error ? error.message : "Unknown run failure";
-  if (stage === "CREATING_PR") return { code: "GITHUB_PR_CREATION_FAILED", message };
-  if (error instanceof VerificationInfrastructureError) {
-    return { code: "VERIFICATION_INFRASTRUCTURE_FAILED", message };
-  }
-  if (/insufficient|ambiguous/i.test(message)) return { code: "INSUFFICIENT_EVIDENCE", message };
-  if (/infrastructure/i.test(message))
-    return { code: "VERIFICATION_INFRASTRUCTURE_FAILED", message };
-  if (/repository|github/i.test(message)) return { code: "REPOSITORY_READ_FAILED", message };
-  if (/research|source/i.test(message)) return { code: "RESEARCH_INCOMPLETE", message };
-  if (/verification/i.test(message)) return { code: "VERIFICATION_FAILED", message };
-  if (/cost|budget/i.test(message)) return { code: "COST_LIMIT_REACHED", message };
-  if (/OpenAI|AI |model/i.test(message)) return { code: "AI_PROVIDER_FAILED", message };
-  return { code: "RUN_FAILED", message };
-}
-
-class VerificationInfrastructureError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "VerificationInfrastructureError";
-  }
 }
 
 async function updateArtifacts(input: {
@@ -1183,7 +1160,7 @@ export async function processClaimedRun(run: ClaimedRun, claimToken: string): Pr
       });
       return;
     }
-    const failure = errorMetadata(error, currentStage);
+    const failure = classifyRunError(error, currentStage);
     const actualCost = totalModelCost(accumulatedUsage);
     try {
       await completeClaimedRun({

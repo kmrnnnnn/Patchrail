@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { zodTextFormat } from "openai/helpers/zod";
 import type {
   ParsedResponseFunctionToolCall,
   ResponseFunctionToolCall,
@@ -15,6 +14,7 @@ import {
   type ModelPricing,
 } from "@/ai/cost";
 import type { RepositoryMap, RepositoryWorkspace } from "@/ai/repository";
+import { openAiStrictJsonSchema, openAiTextFormat } from "@/ai/structured-output";
 import { validateMigrationOutcome, validateResearchCoverage } from "@/ai/validation";
 import type { AgentResult, ModelUsage } from "@/runs/types";
 import { agentResultSchema } from "@/runs/types";
@@ -90,12 +90,13 @@ function roundCostUpToMicros(value: number): number {
   return Math.ceil((value - Number.EPSILON) * 1_000_000) / 1_000_000;
 }
 
-const objectSchema = (properties: Record<string, unknown>, required: string[]) => ({
-  type: "object",
-  properties,
-  required,
-  additionalProperties: false,
-});
+const objectSchema = (properties: Record<string, unknown>, required: string[]) =>
+  openAiStrictJsonSchema({
+    type: "object",
+    properties,
+    required,
+    additionalProperties: false,
+  });
 
 const tools: Tool[] = [
   {
@@ -140,7 +141,7 @@ const tools: Tool[] = [
     strict: true,
     parameters: objectSchema(
       {
-        query: { type: "string", minLength: 1, maxLength: 200 },
+        query: { type: "string" },
         path: { type: "string", description: "Directory path, or empty string for the root" },
         caseSensitive: { type: "boolean" },
       },
@@ -268,7 +269,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
   // provider charges under a single reservation. The durable worker owns retry
   // policy, so each pre-authorized call maps to one HTTP attempt.
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 });
-  const responseFormat = zodTextFormat(agentResultSchema, "patchrail_repository_result");
+  const responseFormat = openAiTextFormat(agentResultSchema, "patchrail_repository_result");
   const input: ResponseInput = [
     {
       role: "user",
