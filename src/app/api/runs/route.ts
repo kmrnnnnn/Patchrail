@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     const configuration = getConfigurationStatus();
     const unavailable = [
       !configuration.github && "GitHub App",
-      !configuration.ai && "OpenAI/pricing",
+      !configuration.ai && "analysis service",
       !configuration.runner && "verification runner",
     ].filter(Boolean);
     if (unavailable.length > 0) {

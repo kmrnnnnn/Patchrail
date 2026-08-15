@@ -15,13 +15,16 @@ describe("start-run response parsing", () => {
 
   it("preserves a safe structured backend error", async () => {
     const response = Response.json(
-      { error: "The AI budget is exhausted", code: "BUDGET_EXCEEDED" },
+      {
+        error: "This workspace has no Patchrail update allowance available",
+        code: "PLAN_ALLOWANCE_EXHAUSTED",
+      },
       { status: 402 },
     );
 
     await expect(readStartRunResponse(response)).resolves.toEqual({
-      error: "The AI budget is exhausted",
-      code: "BUDGET_EXCEEDED",
+      error: "This workspace has no Patchrail update allowance available",
+      code: "PLAN_ALLOWANCE_EXHAUSTED",
     });
   });
 

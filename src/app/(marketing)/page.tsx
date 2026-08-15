@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import {
   ArrowRight,
-  BadgeDollarSign,
   BookOpenCheck,
   Box,
   Check,
@@ -36,7 +35,7 @@ const steps = [
   {
     number: "02",
     title: "Understand",
-    copy: "AI maps the codebase and finds the external APIs it actually uses.",
+    copy: "Patchrail maps the codebase and finds the external APIs it actually uses.",
     icon: ScanSearch,
   },
   {
@@ -54,7 +53,7 @@ const steps = [
   {
     number: "05",
     title: "Review PR",
-    copy: "A verified Draft PR arrives with evidence, changes, and cost.",
+    copy: "A verified Draft PR arrives with evidence, changes, and verification results.",
     icon: GitPullRequestDraft,
   },
 ];
@@ -81,9 +80,9 @@ const trustItems = [
     copy: "Customer code is verified away from the application server with bounded resources.",
   },
   {
-    icon: BadgeDollarSign,
-    title: "Visible AI spend",
-    copy: "See the maximum estimate before a run and actual usage when it completes.",
+    icon: ScanSearch,
+    title: "Visible run outcomes",
+    copy: "See the APIs found, sources researched, files changed, and verification results.",
   },
 ];
 
@@ -155,7 +154,7 @@ export default function HomePage() {
             <p className="eyebrow eyebrow--dark">Designed for review</p>
             <h2>The guardrails developers look for.</h2>
             <p>
-              Repository access, source evidence, verification output, and AI cost stay visible
+              Repository access, source evidence, code changes, and verification output stay visible
               throughout the run.
             </p>
             <div className="trust-section__artifact" aria-label="Example pull request outcome">
@@ -196,7 +195,8 @@ export default function HomePage() {
           <div>
             <p className="eyebrow">Security by boundary</p>
             <h2>
-              Your credentials stay out of the model and your code stays away from the web server.
+              Your credentials stay out of analysis context and your code stays away from the web
+              server.
             </h2>
           </div>
           <ButtonLink href="/security" variant="outline">

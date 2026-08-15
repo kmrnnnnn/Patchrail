@@ -1,7 +1,13 @@
 import Link from "next/link";
-import { ArrowUpRight, Bot, Coins, Search, TimerReset } from "lucide-react";
+import {
+  ArrowUpRight,
+  CheckCircle2,
+  CircleDot,
+  FileCode2,
+  GitPullRequestDraft,
+  Search,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, StatusBadge } from "@/components/ui";
-import { formatUsd } from "@/lib/format";
 import type { UsageSummary } from "@/billing/types";
 import styles from "./billing.module.css";
 
@@ -20,80 +26,61 @@ function formatDate(value: string): string {
 }
 
 export function UsagePanel({ summary }: { summary: UsageSummary }) {
-  const budget = Number(summary.budgetUsd);
-  const committed = Number(summary.spentUsd) + Number(summary.reservedUsd);
-  const percentage = budget > 0 ? Math.min(100, (committed / budget) * 100) : 0;
-
+  const planName = summary.plan === "PRO" ? "Pro" : "Free";
   return (
     <div className={styles.stack}>
       <Card className={styles.usageHero}>
         <CardHeader
-          title="AI budget"
+          title="Patchrail usage"
           description={
             summary.periodEnd
               ? `${formatDate(summary.periodStart)} – ${formatDate(summary.periodEnd)}`
-              : "One-time FREE trial allowance"
+              : "Free trial allowance"
           }
           action={
             <StatusBadge tone={summary.plan === "PRO" ? "accent" : "neutral"}>
-              {summary.plan}
+              {planName}
             </StatusBadge>
           }
         />
         <CardContent>
           <div className={styles.budgetHeadline}>
             <div>
-              <strong>{formatUsd(summary.remainingUsd)}</strong>
-              <span>remaining of {formatUsd(summary.budgetUsd)}</span>
+              <strong>{formatCount(summary.runs)}</strong>
+              <span>{summary.runs === 1 ? "repository update" : "repository updates"}</span>
             </div>
-            <span>{Math.round(percentage)}% committed</span>
-          </div>
-          <div
-            aria-label={`${Math.round(percentage)} percent of AI budget committed`}
-            aria-valuemax={100}
-            aria-valuemin={0}
-            aria-valuenow={Math.round(percentage)}
-            className={styles.meter}
-            role="progressbar"
-          >
-            <span style={{ width: `${percentage}%` }} />
+            <span>Included with your {planName} plan</span>
           </div>
           <dl className={styles.usageStats}>
             <div>
               <dt>
-                <Coins aria-hidden="true" size={17} /> Spent
+                <CheckCircle2 aria-hidden="true" size={17} /> Completed
               </dt>
-              <dd>{formatUsd(summary.spentUsd)}</dd>
+              <dd>{formatCount(summary.completedRuns)}</dd>
             </div>
             <div>
               <dt>
-                <TimerReset aria-hidden="true" size={17} /> In active runs
+                <CircleDot aria-hidden="true" size={17} /> Active
               </dt>
-              <dd>{formatUsd(summary.reservedUsd)}</dd>
+              <dd>{formatCount(summary.activeRuns)}</dd>
             </div>
             <div>
               <dt>
-                <Bot aria-hidden="true" size={17} /> Model calls
+                <Search aria-hidden="true" size={17} /> APIs found
               </dt>
-              <dd>{formatCount(summary.modelCalls)}</dd>
+              <dd>{formatCount(summary.apisFound)}</dd>
             </div>
             <div>
               <dt>
-                <Search aria-hidden="true" size={17} /> Web research calls
+                <FileCode2 aria-hidden="true" size={17} /> Files changed
               </dt>
-              <dd>{formatCount(summary.webSearchCalls)}</dd>
+              <dd>{formatCount(summary.filesChanged)}</dd>
             </div>
             <div>
-              <dt>Input tokens</dt>
-              <dd>{formatCount(summary.inputTokens)}</dd>
-            </div>
-            <div>
-              <dt>Output tokens</dt>
-              <dd>{formatCount(summary.outputTokens)}</dd>
-            </div>
-            <div>
-              <dt>Cached input tokens</dt>
-              <dd>{formatCount(summary.cachedInputTokens)}</dd>
+              <dt>
+                <GitPullRequestDraft aria-hidden="true" size={17} /> Draft PRs
+              </dt>
+              <dd>{formatCount(summary.draftPrs)}</dd>
             </div>
           </dl>
         </CardContent>
@@ -102,12 +89,12 @@ export function UsagePanel({ summary }: { summary: UsageSummary }) {
       <Card>
         <CardHeader
           title="Runs this period"
-          description={`${summary.runs} ${summary.runs === 1 ? "run" : "runs"} · ${formatCount(summary.inputTokens + summary.outputTokens)} model tokens`}
+          description={`${summary.runs} ${summary.runs === 1 ? "repository update" : "repository updates"}`}
         />
         <CardContent>
           {summary.recentRuns.length === 0 ? (
             <p className={styles.emptyUsage}>
-              No AI usage yet. Costs appear here after you start a run.
+              No repository updates yet. Activity appears here after you start a run.
             </p>
           ) : (
             <div className={styles.runList}>
@@ -119,9 +106,17 @@ export function UsagePanel({ summary }: { summary: UsageSummary }) {
                       {formatDate(run.createdAt)} · {run.status.replace(/_/g, " ").toLowerCase()}
                     </span>
                   </div>
-                  <span>{run.modelCalls} model calls</span>
-                  <span>{formatCount(run.inputTokens + run.outputTokens)} tokens</span>
-                  <strong>{formatUsd(run.actualCostUsd)}</strong>
+                  <span>{run.apisFound} APIs found</span>
+                  <span>{run.filesChanged} files changed</span>
+                  <strong>
+                    {run.hasDraftPr
+                      ? "Draft PR"
+                      : run.status === "SUCCEEDED"
+                        ? "No PR needed"
+                        : run.status === "FAILED"
+                          ? "Stopped"
+                          : "In progress"}
+                  </strong>
                   <ArrowUpRight aria-hidden="true" size={16} />
                 </Link>
               ))}

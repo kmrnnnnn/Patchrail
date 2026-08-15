@@ -104,7 +104,7 @@ export default async function OverviewPage() {
         <Card>
           <EmptyState
             title="Analyze your first repository"
-            description="Enable Patchrail on a repository and start one focused AI update."
+            description="Enable Patchrail on a repository and start one focused update."
             action={<ButtonLink href="/app/repositories">Choose a repository</ButtonLink>}
           />
         </Card>

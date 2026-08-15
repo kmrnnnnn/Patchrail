@@ -78,7 +78,11 @@ describe("environment validation", () => {
       AI_MAX_RUN_COST_USD: 5,
     };
 
-    expect(aiEnvSchema.safeParse(configuration).success).toBe(true);
+    const parsed = aiEnvSchema.safeParse(configuration);
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected valid AI configuration");
+    expect(parsed.data.AI_MAX_MODEL_CALLS).toBe(22);
+    expect(aiEnvSchema.safeParse({ ...configuration, AI_MAX_MODEL_CALLS: 23 }).success).toBe(false);
     expect(
       aiEnvSchema.safeParse({
         ...configuration,

@@ -4,7 +4,6 @@ import { ArrowRight, BrainCircuit, Globe2, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, Dialog, DialogClose } from "@/components/ui";
-import { formatUsd } from "@/lib/format";
 
 type StartRunResponse = { runId?: string; error?: string; code?: string };
 
@@ -35,11 +34,9 @@ function unexpectedResponseMessage(response: Response): string {
 
 export function StartRunButton({
   repositoryId,
-  maximumCostUsd,
   disabled,
 }: {
   repositoryId: string;
-  maximumCostUsd: number;
   disabled?: boolean;
 }) {
   const router = useRouter();
@@ -88,7 +85,10 @@ export function StartRunButton({
       <div className="run-consent">
         <div className="run-consent__item">
           <BrainCircuit size={18} />
-          <span>Relevant repository content is sent to OpenAI for analysis and code changes.</span>
+          <span>
+            Relevant repository content is sent to Patchrail’s configured analysis provider to
+            understand integrations and prepare focused code changes.
+          </span>
         </div>
         <div className="run-consent__item">
           <Globe2 size={18} />
@@ -99,13 +99,13 @@ export function StartRunButton({
         <div className="run-consent__item">
           <ShieldCheck size={18} />
           <span>
-            Changes run in an isolated environment; GitHub and infrastructure secrets are never sent
-            to the model.
+            Changes run in an isolated environment; GitHub, billing, and infrastructure secrets are
+            never included in analysis context.
           </span>
         </div>
         <div className="run-consent__cost">
-          <span>Maximum AI spend reserved</span>
-          <strong>{formatUsd(maximumCostUsd)}</strong>
+          <span>Plan allowance</span>
+          <strong>Included with your Patchrail plan</strong>
         </div>
         {error ? (
           <p className="form-error" role="alert">

@@ -13,7 +13,11 @@ export {
   issueInstallationState,
   syncInstallationRepositories,
 } from "@/github/installations";
-export { buildPatchrailPullRequestBody, type PullRequestBodyInput } from "@/github/pr-body";
+export {
+  buildPatchrailPullRequestBody,
+  type PatchrailPullRequestBody,
+  type PullRequestBodyInput,
+} from "@/github/pr-body";
 export {
   downloadRepositoryTarballAtCommit,
   fetchPinnedRepositorySource,

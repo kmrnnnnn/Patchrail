@@ -428,6 +428,19 @@ function remainingAgentLimits(
   return remaining;
 }
 
+function priorAgentPhaseCalls(
+  usage: ModelUsage[],
+  phase: "NORMAL" | "CLARIFICATION" | "REPAIR",
+): number {
+  const purposePrefix =
+    phase === "REPAIR"
+      ? "verification_repair"
+      : phase === "CLARIFICATION"
+        ? "repository_clarification"
+        : "repository_analysis_migration";
+  return usage.filter((item) => item.purpose.startsWith(purposePrefix)).length;
+}
+
 async function applyExistingPayload(
   workspace: RepositoryWorkspace,
   payload: ChangedFilePayload[],
@@ -731,6 +744,10 @@ export async function processClaimedRun(run: ClaimedRun, claimToken: string): Pr
           webSearchUsdPerCall: ai.OPENAI_WEB_SEARCH_USD_PER_CALL,
         },
         limits: remainingAgentLimits(ai, accumulatedUsage, authorizedMaximumCostUsd),
+        priorPhaseModelCalls: priorAgentPhaseCalls(
+          accumulatedUsage,
+          run.inputAnswer ? "CLARIFICATION" : "NORMAL",
+        ),
         humanAnswer: run.inputAnswer ?? undefined,
         priorResult: storedResult,
         priorConsultedUrls: run.research.map((item) => item.url),
@@ -929,6 +946,7 @@ export async function processClaimedRun(run: ClaimedRun, claimToken: string): Pr
           webSearchUsdPerCall: ai.OPENAI_WEB_SEARCH_USD_PER_CALL,
         },
         limits: remainingAgentLimits(ai, accumulatedUsage, authorizedMaximumCostUsd),
+        priorPhaseModelCalls: priorAgentPhaseCalls(accumulatedUsage, "REPAIR"),
         repairDiagnostics: verificationDiagnostics(verification),
         humanAnswer: run.inputAnswer ?? undefined,
         priorResult: agent.result,
@@ -1111,8 +1129,6 @@ export async function processClaimedRun(run: ClaimedRun, claimToken: string): Pr
       research: agent.result.research,
       changedFiles,
       verification,
-      model: ai.OPENAI_MODEL,
-      costUsd: cost,
     });
     const delivery = await deliverDraftPullRequest({
       workspaceId: run.workspaceId,

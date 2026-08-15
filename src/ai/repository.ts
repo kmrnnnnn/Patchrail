@@ -121,6 +121,12 @@ const MAX_INITIAL_MANIFEST_BYTES = 48_000;
 const MAX_INITIAL_MANIFEST_BYTES_EACH = 12_000;
 const MAX_INITIAL_URL_FILES = 200;
 const MAX_INITIAL_URL_SCAN_BYTES = 1_000_000;
+const MAX_INITIAL_IMPORT_OBSERVATIONS = 100;
+const MAX_INITIAL_IMPORT_FILES = 5;
+const MAX_INITIAL_IMPORT_BYTES = 20_000;
+const MAX_BATCH_FILE_COUNT = 8;
+const MAX_BATCH_FILE_CONTENT_BYTES = 10_000;
+const MAX_BATCH_OUTPUT_BYTES = 96_000;
 
 export type RepositoryFileEntry = {
   path: string;
@@ -141,6 +147,12 @@ type RepositoryLimits = {
   maxContextBytes: number;
 };
 
+export type RepositoryBatchReadRequest = {
+  path: string;
+  startLine?: number | null;
+  endLine?: number | null;
+};
+
 function digest(value: Buffer | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -148,7 +160,11 @@ function digest(value: Buffer | string): string {
 function boundedUtf8(value: string, maxBytes: number): string {
   const buffer = Buffer.from(value, "utf8");
   if (buffer.length <= maxBytes) return value;
-  return `${buffer.subarray(0, maxBytes).toString("utf8")}\n[truncated]`;
+  const suffix = "\n[truncated]";
+  const suffixBytes = Buffer.byteLength(suffix);
+  let prefix = buffer.subarray(0, Math.max(0, maxBytes - suffixBytes)).toString("utf8");
+  while (Buffer.byteLength(prefix) + suffixBytes > maxBytes) prefix = prefix.slice(0, -1);
+  return `${prefix}${suffix}`;
 }
 
 function isLikelyText(buffer: Buffer): boolean {
@@ -186,6 +202,23 @@ function isTextPath(relativePath: string): boolean {
   if (MANIFEST_NAMES.has(name)) return true;
   const extension = path.posix.extname(name).toLowerCase();
   return TEXT_EXTENSIONS.has(extension) || name.startsWith("Dockerfile") || name === "Makefile";
+}
+
+function normalizeImportObservation(specifier: string): string | null {
+  const value = specifier.trim();
+  if (
+    !value ||
+    value.length > 200 ||
+    value.startsWith(".") ||
+    value.startsWith("/") ||
+    value.startsWith("@/") ||
+    value.startsWith("node:") ||
+    value.includes("://")
+  ) {
+    return null;
+  }
+  if (value.startsWith("@")) return value.split("/").slice(0, 2).join("/");
+  return value.split(/[/.]/, 1)[0] ?? null;
 }
 
 export class RepositoryWorkspace {
@@ -227,12 +260,14 @@ export class RepositoryWorkspace {
     return absolute;
   }
 
-  private consumeRead(bytes: number) {
-    this.readCount += 1;
-    this.contextBytes += bytes;
-    if (this.readCount > this.limits.maxReads) throw new Error("Repository read limit reached");
-    if (this.contextBytes > this.limits.maxContextBytes)
+  private consumeRead(bytes: number, reads = 1) {
+    const nextReadCount = this.readCount + reads;
+    const nextContextBytes = this.contextBytes + bytes;
+    if (nextReadCount > this.limits.maxReads) throw new Error("Repository read limit reached");
+    if (nextContextBytes > this.limits.maxContextBytes)
       throw new Error("Repository context limit reached");
+    this.readCount = nextReadCount;
+    this.contextBytes = nextContextBytes;
   }
 
   private async assertNoSymlinkComponents(
@@ -302,7 +337,12 @@ export class RepositoryWorkspace {
     return output;
   }
 
-  async readFile(relativePath: string): Promise<{ content: string; sha256: string; size: number }> {
+  private async loadTextFile(relativePath: string): Promise<{
+    safePath: string;
+    content: string;
+    sha256: string;
+    size: number;
+  }> {
     const safe = normalizeRelativePath(relativePath);
     if (!isTextPath(safe)) throw new Error("Only relevant text source files may be read");
     const absolute = this.resolve(safe, { allowWorkflow: true });
@@ -315,23 +355,87 @@ export class RepositoryWorkspace {
     const rawContent = buffer.toString("utf8");
     const content = redactSecrets(rawContent);
     if (content !== rawContent) this.redactedPaths.add(safe);
-    this.consumeRead(Buffer.byteLength(content));
-    return { content, sha256: digest(buffer), size: buffer.length };
+    return { safePath: safe, content, sha256: digest(buffer), size: buffer.length };
+  }
+
+  async readFile(relativePath: string): Promise<{ content: string; sha256: string; size: number }> {
+    const file = await this.loadTextFile(relativePath);
+    this.consumeRead(Buffer.byteLength(file.content));
+    return { content: file.content, sha256: file.sha256, size: file.size };
+  }
+
+  async readFiles(files: RepositoryBatchReadRequest[]) {
+    if (files.length < 1 || files.length > MAX_BATCH_FILE_COUNT) {
+      throw new Error(`A batch read must contain 1 to ${MAX_BATCH_FILE_COUNT} files`);
+    }
+
+    const output: Array<{
+      path: string;
+      content: string;
+      sha256: string;
+      size: number;
+      startLine: number;
+      endLine: number;
+      totalLines: number;
+      truncated: boolean;
+    }> = [];
+
+    for (const request of files) {
+      const startLine = request.startLine ?? null;
+      const endLine = request.endLine ?? null;
+      if ((startLine === null) !== (endLine === null)) {
+        throw new Error("Batch line ranges require both startLine and endLine");
+      }
+      if (
+        startLine !== null &&
+        endLine !== null &&
+        (startLine < 1 || endLine < startLine || endLine - startLine >= 500)
+      ) {
+        throw new Error("Line range must contain 1 to 500 lines");
+      }
+
+      const file = await this.loadTextFile(request.path);
+      const lines = file.content.split("\n");
+      const selectedStartLine = startLine ?? 1;
+      const selectedEndLine = Math.min(endLine ?? lines.length, lines.length);
+      const selected = lines.slice(selectedStartLine - 1, selectedEndLine).join("\n");
+      const truncated = Buffer.byteLength(selected) > MAX_BATCH_FILE_CONTENT_BYTES;
+      const content = boundedUtf8(selected, MAX_BATCH_FILE_CONTENT_BYTES);
+      output.push({
+        path: file.safePath,
+        content,
+        sha256: file.sha256,
+        size: file.size,
+        startLine: selectedStartLine,
+        endLine: selectedEndLine,
+        totalLines: lines.length,
+        truncated,
+      });
+    }
+
+    const outputBytes = Buffer.byteLength(JSON.stringify(output));
+    if (outputBytes > MAX_BATCH_OUTPUT_BYTES) {
+      throw new Error("Batch read output exceeds the aggregate byte limit");
+    }
+    this.consumeRead(outputBytes, files.length);
+    return output;
   }
 
   async readFileRange(relativePath: string, startLine: number, endLine: number) {
-    if (startLine < 1 || endLine < startLine || endLine - startLine > 500) {
+    if (startLine < 1 || endLine < startLine || endLine - startLine >= 500) {
       throw new Error("Line range must contain 1 to 500 lines");
     }
-    const file = await this.readFile(relativePath);
+    const file = await this.loadTextFile(relativePath);
     const lines = file.content.split("\n");
-    return {
+    const output = {
       content: lines.slice(startLine - 1, endLine).join("\n"),
       startLine,
       endLine: Math.min(endLine, lines.length),
       totalLines: lines.length,
       sha256: file.sha256,
     };
+    this.consumeRead(Buffer.byteLength(JSON.stringify(output)));
+    return output;
   }
 
   async searchRepository(
@@ -504,6 +608,7 @@ export class RepositoryWorkspace {
     const manifests: Array<{ path: string; summary: unknown }> = [];
     const configurationFiles: string[] = [];
     const urlObservations = new Set<string>();
+    const importObservations = new Map<string, Set<string>>();
     let manifestBytes = 0;
     let urlFilesScanned = 0;
     let urlBytesScanned = 0;
@@ -562,20 +667,45 @@ export class RepositoryWorkspace {
       if (
         entry.size <= 100_000 &&
         isTextPath(entry.path) &&
-        urlObservations.size < 100 &&
+        (urlObservations.size < 100 || importObservations.size < MAX_INITIAL_IMPORT_OBSERVATIONS) &&
         urlFilesScanned < MAX_INITIAL_URL_FILES &&
         urlBytesScanned + entry.size <= MAX_INITIAL_URL_SCAN_BYTES
       ) {
         try {
           const absolute = this.resolve(entry.path, { allowWorkflow: true });
           await this.assertNoSymlinkComponents(absolute);
-          const content = await fs.readFile(absolute, "utf8");
+          const content = redactSecrets(await fs.readFile(absolute, "utf8"));
           urlFilesScanned += 1;
           urlBytesScanned += entry.size;
           for (const match of content.matchAll(/https?:\/\/([a-z0-9.-]+)(?:[:/]|$)/gi)) {
             if (match[1] && !/^(?:localhost|127\.0\.0\.1)$/.test(match[1])) {
               urlObservations.add(match[1].toLowerCase());
+              if (urlObservations.size >= 100) break;
             }
+          }
+          const recordImport = (specifier: string) => {
+            const normalized = normalizeImportObservation(specifier);
+            if (!normalized) return;
+            let files = importObservations.get(normalized);
+            if (!files) {
+              if (importObservations.size >= MAX_INITIAL_IMPORT_OBSERVATIONS) return;
+              files = new Set<string>();
+              importObservations.set(normalized, files);
+            }
+            if (files.size < MAX_INITIAL_IMPORT_FILES) files.add(entry.path);
+          };
+          for (const match of content.matchAll(
+            /\b(?:from\s+|require\s*\(\s*|import\s*\(\s*)["']([^"']+)["']/g,
+          )) {
+            if (match[1]) recordImport(match[1]);
+          }
+          for (const match of content.matchAll(/\bimport\s*["']([^"']+)["']/g)) {
+            if (match[1]) recordImport(match[1]);
+          }
+          for (const match of content.matchAll(
+            /^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_.]*)/gm,
+          )) {
+            if (match[1]) recordImport(match[1]);
           }
         } catch {
           // Cheap URL hints are optional.
@@ -583,9 +713,26 @@ export class RepositoryWorkspace {
       }
     }
 
+    const observedImports: Array<{ specifier: string; files: string[] }> = [];
+    let observedImportBytes = 2;
+    for (const [specifier, files] of [...importObservations].sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      const observation = { specifier, files: [...files] };
+      const nextBytes = Buffer.byteLength(JSON.stringify(observation)) + 1;
+      if (observedImportBytes + nextBytes > MAX_INITIAL_IMPORT_BYTES) break;
+      observedImports.push(observation);
+      observedImportBytes += nextBytes;
+    }
+
     this.consumeRead(
       Buffer.byteLength(
-        JSON.stringify({ manifests, configurationFiles, observedDomains: [...urlObservations] }),
+        JSON.stringify({
+          manifests,
+          configurationFiles,
+          observedDomains: [...urlObservations],
+          observedImports,
+        }),
       ),
     );
 
@@ -595,6 +742,7 @@ export class RepositoryWorkspace {
       manifests,
       configurationFiles: configurationFiles.slice(0, 200),
       observedDomains: [...urlObservations],
+      observedImports,
       policy: {
         excludedDirectories: [...EXCLUDED_DIRECTORY_NAMES],
         maxTextFileBytes: MAX_TEXT_FILE_BYTES,
@@ -612,6 +760,7 @@ export type RepositoryMap = {
   manifests: Array<{ path: string; summary: unknown }>;
   configurationFiles: string[];
   observedDomains: string[];
+  observedImports: Array<{ specifier: string; files: string[] }>;
   policy: {
     excludedDirectories: string[];
     maxTextFileBytes: number;

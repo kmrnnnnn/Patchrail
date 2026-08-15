@@ -31,6 +31,43 @@ describe("bounded repository tools", () => {
     await expect(repository.readFile("../secret.txt")).rejects.toThrow("Invalid repository path");
   });
 
+  it("batch-reads several repository files within strict file, range, and byte bounds", async () => {
+    const { root, repository } = await workspace();
+    await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        fs.writeFile(
+          path.join(root, "src", `batch-${index}.ts`),
+          `${`export const value${index} = "${"x".repeat(14_000)}";\n`}second line\n`,
+        ),
+      ),
+    );
+
+    const results = await repository.readFiles(
+      Array.from({ length: 8 }, (_, index) => ({
+        path: `src/batch-${index}.ts`,
+        startLine: null,
+        endLine: null,
+      })),
+    );
+
+    expect(results).toHaveLength(8);
+    expect(results.every((result) => result.truncated)).toBe(true);
+    expect(results.every((result) => Buffer.byteLength(result.content) <= 10_000)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(results))).toBeLessThanOrEqual(96_000);
+    expect(repository.usage.reads).toBe(8);
+    await expect(
+      repository.readFiles(
+        Array.from({ length: 9 }, (_, index) => ({ path: `src/batch-${index}.ts` })),
+      ),
+    ).rejects.toThrow("1 to 8 files");
+    await expect(
+      repository.readFiles([{ path: "../secret.txt", startLine: null, endLine: null }]),
+    ).rejects.toThrow("Invalid repository path");
+    await expect(
+      repository.readFiles([{ path: "src/api.ts", startLine: 1, endLine: 501 }]),
+    ).rejects.toThrow("1 to 500 lines");
+  });
+
   it("blocks credential files", async () => {
     const { root, repository } = await workspace();
     await fs.writeFile(path.join(root, ".env"), "TOKEN=secret");
@@ -232,6 +269,10 @@ describe("bounded repository tools", () => {
       Array.from({ length: 2_000 }, (_, index) => [`dependency-${index}`, "1.0.0"]),
     );
     await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies }));
+    await fs.writeFile(
+      path.join(root, "src", "imports.ts"),
+      `import OpenAI from "openai";\nimport "${"x".repeat(300)}";\nexport { OpenAI };\n`,
+    );
     const many = path.join(root, "z-many");
     await fs.mkdir(many);
     await Promise.all(
@@ -249,5 +290,7 @@ describe("bounded repository tools", () => {
     expect(Buffer.byteLength(JSON.stringify(map))).toBeLessThan(150_000);
     expect(map.treeTruncated).toBe(true);
     expect(JSON.stringify(map.manifests)).toContain("truncated");
+    expect(map.observedImports).toContainEqual({ specifier: "openai", files: ["src/imports.ts"] });
+    expect(map.observedImports.every((item) => item.specifier.length <= 200)).toBe(true);
   });
 });

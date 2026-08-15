@@ -6,7 +6,7 @@ import { ButtonLink } from "@/components/ui";
 export const metadata: Metadata = {
   title: "Pricing",
   description:
-    "Start with one repository, then move to Pro for larger teams and a larger monthly AI budget.",
+    "Start with one repository, then move to Pro for more repository capacity and a monthly Patchrail update allowance.",
 };
 
 function configuredLimit(value: string | undefined, fallback: number): number {
@@ -65,16 +65,16 @@ export default function PricingPage() {
   const proRepositoryLimit = configuredLimit(process.env.PRO_REPOSITORY_LIMIT, 20);
   const freeFeatures = [
     repositoryLabel(freeRepositoryLimit),
-    "Small trial AI budget",
+    "Trial Patchrail update allowance",
     "Current official API research",
     "Isolated repository verification",
     "Verified GitHub Draft PRs",
   ];
   const proFeatures = [
     `Up to ${repositoryLabel(proRepositoryLimit)}`,
-    "Larger monthly AI budget",
+    "Monthly Patchrail update allowance",
     "Paid analysis and update runs",
-    "Per-run usage and cost detail",
+    "Per-run outcomes and verification detail",
     "Everything included in Free",
   ];
 
@@ -87,8 +87,8 @@ export default function PricingPage() {
           </p>
           <h1>Start small. Pay for the maintenance you actually use.</h1>
           <p>
-            Every run has an estimated maximum before it starts. Actual model usage and cost remain
-            visible after it completes.
+            Each plan defines its repository capacity and Patchrail update allowance. Run outcomes
+            and verification evidence remain visible after every update.
           </p>
         </div>
       </section>
@@ -122,13 +122,14 @@ export default function PricingPage() {
               <Gauge aria-hidden="true" size={20} />
               <p>
                 <strong>Limits are explicit.</strong>
-                Repository allowances and AI budgets are shown in your workspace before a paid run.
+                Repository and update allowances are shown in your workspace before an update.
               </p>
             </div>
           </div>
           <p className="pricing-disclaimer">
             Plan limits and Pro pricing are deployment-configured and confirmed in the Patchrail
-            billing screen before purchase. AI budget is a spending guardrail, not prepaid credit.
+            billing screen before purchase. Update allowances are part of the Patchrail plan and are
+            not prepaid credit.
           </p>
         </div>
       </section>

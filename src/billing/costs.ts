@@ -23,7 +23,6 @@ import { getPlanDefinition, normalizeBillingPlan } from "@/billing/plans";
 import { enforceWorkspaceRepositoryEntitlements } from "@/billing/repository-entitlements";
 import { reconcilePaidBillingIfStale } from "@/billing/stripe";
 import type { PlanDefinition, UsageSummary } from "@/billing/types";
-import type { ModelUsage } from "@/runs/types";
 
 export {
   calculateBoundedRunReservation,
@@ -989,9 +988,9 @@ export async function getUsageSummary(workspaceId: string): Promise<UsageSummary
       repositoryName: repositories.fullName,
       status: aiRuns.status,
       createdAt: aiRuns.createdAt,
-      actualCostUsd: aiRuns.actualCostUsd,
-      estimatedCostUsd: aiRuns.estimatedCostUsd,
-      modelUsage: aiRuns.modelUsage,
+      detectedApis: aiRuns.detectedApis,
+      changedFiles: aiRuns.changedFiles,
+      githubPrUrl: aiRuns.githubPrUrl,
     })
     .from(aiRuns)
     .innerJoin(repositories, eq(repositories.id, aiRuns.repositoryId))
@@ -1005,62 +1004,40 @@ export async function getUsageSummary(workspaceId: string): Promise<UsageSummary
     .orderBy(desc(aiRuns.createdAt));
 
   const plan = normalizeBillingPlan(account.plan);
-  const budgetMicros = usdToMicros(account.aiBudgetUsd);
-  const [totals] = await db
-    .select({
-      spentUsd: sql<string>`coalesce(sum(case when ${costReservations.status} in ('RESERVED', 'SETTLED') then coalesce(${costReservations.settledAmountUsd}, 0) else 0 end), 0)`,
-      reservedUsd: sql<string>`coalesce(sum(case when ${costReservations.status} = 'RESERVED' then greatest(${costReservations.amountUsd} - coalesce(${costReservations.settledAmountUsd}, 0), 0) else 0 end), 0)`,
-    })
-    .from(costReservations)
-    .where(
-      and(
-        eq(costReservations.workspaceId, workspaceId),
-        or(eq(costReservations.status, "RESERVED"), reservationAccountedInPeriod(period)),
-      ),
-    );
-  const spentMicros = usdToMicros(totals?.spentUsd ?? "0");
-  const reservedMicros = usdToMicros(totals?.reservedUsd ?? "0");
-
-  const usageTotals = rows.reduce(
-    (accumulator, row) => {
-      for (const usage of row.modelUsage as ModelUsage[]) {
-        accumulator.modelCalls += 1;
-        accumulator.inputTokens += usage.inputTokens;
-        accumulator.outputTokens += usage.outputTokens;
-        accumulator.cachedInputTokens += usage.cachedInputTokens;
-        accumulator.webSearchCalls += usage.webSearchCalls;
-      }
-      return accumulator;
-    },
-    { modelCalls: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, webSearchCalls: 0 },
-  );
+  const customerRows = rows.map((row) => ({
+    id: row.id,
+    repositoryName: row.repositoryName,
+    status: row.status,
+    createdAt: row.createdAt.toISOString(),
+    apisFound: row.detectedApis.length,
+    filesChanged: row.changedFiles.length,
+    hasDraftPr: Boolean(row.githubPrUrl),
+  }));
 
   return {
     plan,
     periodStart: period.start.toISOString(),
     periodEnd: period.end?.toISOString() ?? null,
-    budgetUsd: microsToUsd(budgetMicros),
-    spentUsd: microsToUsd(spentMicros),
-    reservedUsd: microsToUsd(reservedMicros),
-    remainingUsd: microsToUsd(Math.max(0, budgetMicros - spentMicros - reservedMicros)),
-    runs: rows.length,
-    ...usageTotals,
-    recentRuns: rows.slice(0, 25).map((row) => {
-      const usage = row.modelUsage as ModelUsage[];
-      return {
-        id: row.id,
-        repositoryName: row.repositoryName,
-        status: row.status,
-        createdAt: row.createdAt.toISOString(),
-        actualCostUsd: row.actualCostUsd,
-        estimatedCostUsd: row.estimatedCostUsd,
-        modelCalls: usage.length,
-        inputTokens: usage.reduce((total, item) => total + item.inputTokens, 0),
-        outputTokens: usage.reduce((total, item) => total + item.outputTokens, 0),
-        cachedInputTokens: usage.reduce((total, item) => total + item.cachedInputTokens, 0),
-        webSearchCalls: usage.reduce((total, item) => total + item.webSearchCalls, 0),
-      };
-    }),
+    runs: customerRows.length,
+    completedRuns: customerRows.filter((run) => run.status === "SUCCEEDED").length,
+    activeRuns: customerRows.filter((run) =>
+      [
+        "QUEUED",
+        "READING_REPOSITORY",
+        "FINDING_APIS",
+        "RESEARCHING_APIS",
+        "PLANNING_CHANGES",
+        "UPDATING_CODE",
+        "VERIFYING",
+        "REPAIRING",
+        "CREATING_PR",
+        "NEEDS_INPUT",
+      ].includes(run.status),
+    ).length,
+    apisFound: customerRows.reduce((total, run) => total + run.apisFound, 0),
+    filesChanged: customerRows.reduce((total, run) => total + run.filesChanged, 0),
+    draftPrs: customerRows.filter((run) => run.hasDraftPr).length,
+    recentRuns: customerRows.slice(0, 25),
   };
 }
 

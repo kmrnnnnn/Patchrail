@@ -17,7 +17,7 @@ import { ButtonLink } from "@/components/ui";
 export const metadata: Metadata = {
   title: "Security",
   description:
-    "How Patchrail bounds repository access, AI data disclosure, isolated verification, and GitHub delivery.",
+    "How Patchrail bounds repository access, analysis context, isolated verification, and GitHub delivery.",
 };
 
 const controls = [
@@ -28,8 +28,8 @@ const controls = [
   },
   {
     icon: Sparkles,
-    title: "Bounded AI context",
-    copy: "The model receives relevant repository data and safe run metadata—not GitHub tokens, app keys, billing secrets, or database credentials.",
+    title: "Bounded analysis context",
+    copy: "Relevant repository data and safe run metadata are sent to Patchrail’s configured analysis provider—not GitHub tokens, app keys, billing secrets, or database credentials.",
   },
   {
     icon: Box,
@@ -64,7 +64,7 @@ export default function SecurityPage() {
           <h1>Clear boundaries around code, credentials, and delivery.</h1>
           <p>
             Patchrail needs meaningful repository context to do useful work. Its architecture limits
-            where that context goes, keeps credentials out of the model, and leaves merging to you.
+            where that context goes, keeps credentials out of analysis, and leaves merging to you.
           </p>
         </div>
       </section>
@@ -94,8 +94,8 @@ export default function SecurityPage() {
             <p className="eyebrow">What moves where</p>
             <h2>A small, inspectable data path.</h2>
             <p>
-              Before the first analysis, Patchrail explains exactly what the run does and shows its
-              maximum estimated AI spend.
+              Before the first analysis, Patchrail explains exactly what the run does and confirms
+              that it uses the workspace’s Patchrail allowance.
             </p>
           </div>
           <ol className="data-path">
@@ -118,9 +118,9 @@ export default function SecurityPage() {
               <div>
                 <strong>Relevant code analyzed</strong>
                 <p>
-                  Repository maps and relevant source content are sent to the configured AI
-                  provider. Provider handling is governed by your deployment’s provider terms and
-                  settings.
+                  Repository maps and relevant source content are sent to Patchrail’s configured
+                  analysis provider within a bounded workflow. Credentials and billing data are
+                  excluded.
                 </p>
               </div>
             </li>

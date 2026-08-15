@@ -12,6 +12,12 @@ import {
   totalModelCost,
   type ModelPricing,
 } from "@/ai/cost";
+import {
+  agentTurnPolicy,
+  deriveAgentCallPolicy,
+  toolsForAgentTurn,
+  type AgentCallPolicy,
+} from "@/ai/orchestration";
 import type { RepositoryMap, RepositoryWorkspace } from "@/ai/repository";
 import { openAiStrictJsonSchema, openAiTextFormat } from "@/ai/structured-output";
 import { buildToolContinuation, type FunctionCallResult } from "@/ai/tool-continuation";
@@ -24,6 +30,40 @@ const listTreeArguments = z.object({
   depth: z.number().int().min(0).max(8),
 });
 const readFileArguments = z.object({ path: z.string().min(1) });
+const readFilesArguments = z
+  .object({
+    files: z
+      .array(
+        z.object({
+          path: z.string().min(1),
+          startLine: z.number().int().positive().nullable(),
+          endLine: z.number().int().positive().nullable(),
+        }),
+      )
+      .min(1)
+      .max(8),
+  })
+  .superRefine((input, context) => {
+    input.files.forEach((file, index) => {
+      if ((file.startLine === null) !== (file.endLine === null)) {
+        context.addIssue({
+          code: "custom",
+          message: "startLine and endLine must both be null or both be integers",
+          path: ["files", index],
+        });
+      } else if (
+        file.startLine !== null &&
+        file.endLine !== null &&
+        (file.endLine < file.startLine || file.endLine - file.startLine >= 500)
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "A batch line range may contain at most 500 lines",
+          path: ["files", index],
+        });
+      }
+    });
+  });
 const readRangeArguments = z.object({
   path: z.string().min(1),
   startLine: z.number().int().positive(),
@@ -70,6 +110,7 @@ type RunAgentOptions = {
   model: string;
   pricing: ModelPricing;
   limits: AgentLimits;
+  priorPhaseModelCalls: number;
   repairDiagnostics?: string;
   humanAnswer?: string;
   priorResult?: AgentResult;
@@ -115,9 +156,39 @@ const tools: Tool[] = [
   {
     type: "function",
     name: "read_file",
-    description: "Read one bounded relevant text file. Secrets are redacted by the host.",
+    description:
+      "Read one bounded relevant text file when its complete content is needed for a patch. Secrets are redacted by the host.",
     strict: true,
     parameters: objectSchema({ path: { type: "string" } }, ["path"]),
+  },
+  {
+    type: "function",
+    name: "read_files",
+    description:
+      "Explore up to 8 already-identified relevant text files in one bounded call. Each item returns at most 10 KB and the aggregate result is at most 96 KB. Use ranges for targeted evidence; secrets are redacted by the host.",
+    strict: true,
+    parameters: objectSchema(
+      {
+        files: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: objectSchema(
+            {
+              path: { type: "string" },
+              startLine: {
+                anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+              },
+              endLine: {
+                anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+              },
+            },
+            ["path", "startLine", "endLine"],
+          ),
+        },
+      },
+      ["files"],
+    ),
   },
   {
     type: "function",
@@ -185,7 +256,7 @@ const tools: Tool[] = [
   },
 ];
 
-function systemInstructions(options: RunAgentOptions): string {
+function systemInstructions(options: RunAgentOptions, callPolicy: AgentCallPolicy): string {
   const now = new Date().toISOString();
   return `You are Patchrail's repository migration engine. Work on repository ${options.repositoryName} pinned to immutable commit ${options.startingCommitSha}. Current retrieval time is ${now}.
 
@@ -210,7 +281,12 @@ Evidence rules:
 - retrievedAt must be ${now}.
 - Do not reveal hidden reasoning or chain-of-thought. Return conclusions, evidence, plan, and concise summaries only.
 
-Cost/tool discipline: use the cheap initial map first, request only relevant file content, and finish within bounded calls. The GitHub token and infrastructure credentials are not available to you and must never be requested.`;
+Orchestration policy:
+- This invocation has at most ${callPolicy.totalCalls} model responses: ${callPolicy.repositoryUnderstandingCalls} repository-understanding responses, ${callPolicy.researchAndPatchCalls} research/patch responses after exploratory reads close, and ${callPolicy.finalSynthesisCalls} reserved final structured-synthesis response.
+- Use the compact initial map before reading. When several known files are relevant, call read_files once or issue multiple independent function calls in the same response instead of serial one-file rounds.
+- Finish early when the evidence is sufficient. Exploratory repository tools will be removed before the hard ceiling, and all tools will be removed for the reserved final response. At that point, classify unsupported conclusions as INSUFFICIENT_EVIDENCE and return the required structured result.
+
+Cost/tool discipline: request only relevant file content and finish within all bounded call, token, cost, research, repository-context, and elapsed-time ceilings. The GitHub token and infrastructure credentials are not available to you and must never be requested.`;
 }
 
 export async function executeRepositoryFunctionCall(
@@ -225,6 +301,10 @@ export async function executeRepositoryFunctionCall(
     case "read_file": {
       const input = readFileArguments.parse(JSON.parse(call.arguments));
       return workspace.readFile(input.path);
+    }
+    case "read_files": {
+      const input = readFilesArguments.parse(JSON.parse(call.arguments));
+      return workspace.readFiles(input.files);
     }
     case "read_file_range": {
       const input = readRangeArguments.parse(JSON.parse(call.arguments));
@@ -252,6 +332,26 @@ export async function executeRepositoryFunctionCall(
   }
 }
 
+export async function executeRepositoryFunctionCalls(
+  workspace: RepositoryWorkspace,
+  calls: ReadonlyArray<ResponseFunctionToolCall>,
+): Promise<FunctionCallResult[]> {
+  const results: FunctionCallResult[] = [];
+  for (const call of calls) {
+    let value: unknown;
+    try {
+      value = { ok: true, result: await executeRepositoryFunctionCall(workspace, call) };
+    } catch (error) {
+      value = {
+        ok: false,
+        error: error instanceof Error ? error.message : "Repository tool failed",
+      };
+    }
+    results.push({ callId: call.call_id, value });
+  }
+  return results;
+}
+
 function collectConsultedUrls(item: { type: string; [key: string]: unknown }, output: Set<string>) {
   if (item.type !== "web_search_call") return;
   const action = item.action as
@@ -273,6 +373,14 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
   // policy, so each pre-authorized call maps to one HTTP attempt.
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 });
   const responseFormat = openAiTextFormat(agentResultSchema, "patchrail_repository_result");
+  const callPolicy = deriveAgentCallPolicy({
+    repositoryMap: options.repositoryMap,
+    availableModelCalls: options.limits.maxModelCalls,
+    priorPhaseModelCalls: options.priorPhaseModelCalls,
+    repair: Boolean(options.repairDiagnostics),
+    clarification: Boolean(options.humanAnswer) && !options.repairDiagnostics,
+  });
+  const instructions = systemInstructions(options, callPolicy);
   const input: ResponseInput = [
     {
       role: "user",
@@ -301,12 +409,24 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
   const usage: ModelUsage[] = [];
   const consultedUrls = new Set<string>(options.priorConsultedUrls ?? []);
   const startedAt = Date.now();
+  const usagePurpose = options.repairDiagnostics
+    ? "verification_repair"
+    : options.humanAnswer
+      ? "repository_clarification"
+      : "repository_analysis_migration";
   let researchCalls = 0;
+  let previousTurnPhase: ReturnType<typeof agentTurnPolicy>["phase"] | null = null;
 
-  for (let callIndex = 0; callIndex < options.limits.maxModelCalls; callIndex += 1) {
+  for (let callIndex = 0; callIndex < callPolicy.totalCalls; callIndex += 1) {
     if (Date.now() - startedAt > options.limits.maxElapsedMinutes * 60_000) {
       throw new Error("AI elapsed-time limit reached");
     }
+
+    const turnPolicy = agentTurnPolicy(callPolicy, callIndex);
+    if (turnPolicy.instruction && turnPolicy.phase !== previousTurnPhase) {
+      input.push({ role: "user", content: turnPolicy.instruction });
+    }
+    previousTurnPhase = turnPolicy.phase;
 
     const callStartedAt = Date.now();
     const remainingElapsedMs =
@@ -318,9 +438,8 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     const remainingOutputTokens = options.limits.maxOutputTokens - usedOutputTokens;
     const remainingCostUsd = options.limits.maxCostUsd - totalModelCost(usage);
     const remainingResearchCalls = options.limits.maxResearchCalls - researchCalls;
-    const instructions = systemInstructions(options);
-    const availableTools =
-      remainingResearchCalls > 0 ? tools : tools.filter((tool) => tool.type !== "web_search");
+    const availableTools = toolsForAgentTurn(tools, turnPolicy, remainingResearchCalls);
+    const webSearchAvailable = availableTools.some((tool) => tool.type === "web_search");
     // UTF-8 bytes conservatively bound the serialized request itself. Hosted
     // web-search content may add provider-reported input after this request, so
     // the durable authorization below covers the full remaining run allowance.
@@ -340,12 +459,13 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     const inputCostReserve =
       (remainingInputTokens / 1_000_000) *
       Math.max(maximumTokenPricing.inputUsdPer1M, maximumTokenPricing.cachedInputUsdPer1M);
-    const maximumToolCalls =
-      remainingResearchCalls > 0
+    const maximumToolCalls = !turnPolicy.allowTools
+      ? 0
+      : webSearchAvailable
         ? Math.min(remainingResearchCalls, options.limits.maxWebSearchCallsPerResponse)
         : options.limits.maxWebSearchCallsPerResponse;
     const webSearchCostReserve =
-      (remainingResearchCalls > 0 ? maximumToolCalls : 0) * options.pricing.webSearchUsdPerCall;
+      (webSearchAvailable ? maximumToolCalls : 0) * options.pricing.webSearchUsdPerCall;
     const outputBudgetByCost = Math.floor(
       ((remainingCostUsd - inputCostReserve - webSearchCostReserve - 0.000001) * 1_000_000) /
         maximumTokenPricing.outputUsdPer1M,
@@ -368,9 +488,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     await options.onCallStarted({
       callId: pendingCallId,
       model: options.model,
-      purpose: options.repairDiagnostics
-        ? "verification_repair_in_flight"
-        : "repository_analysis_migration_in_flight",
+      purpose: `${usagePurpose}_in_flight`,
       inputTokens: 0,
       outputTokens: 0,
       cachedInputTokens: 0,
@@ -386,13 +504,13 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
         instructions,
         input,
         tools: availableTools,
-        tool_choice: "auto",
-        parallel_tool_calls: false,
+        tool_choice: turnPolicy.toolChoice,
+        parallel_tool_calls: turnPolicy.allowTools,
         // Responses counts every hosted/function tool invocation here. While web
         // search is enabled this also provides a hard, pre-authorized upper bound
         // on paid searches. Once its run allowance is exhausted, repository tools
         // retain the same bounded per-response capacity.
-        max_tool_calls: maximumToolCalls,
+        ...(maximumToolCalls > 0 ? { max_tool_calls: maximumToolCalls } : {}),
         include: ["web_search_call.action.sources", "reasoning.encrypted_content"],
         text: {
           format: responseFormat,
@@ -430,7 +548,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     const callUsage: ModelUsage = {
       callId: response.id,
       model: options.model,
-      purpose: options.repairDiagnostics ? "verification_repair" : "repository_analysis_migration",
+      purpose: usagePurpose,
       inputTokens,
       outputTokens,
       cachedInputTokens,
@@ -442,7 +560,7 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
     if (
       inputTokens > remainingInputTokens ||
       outputTokens > outputTokenCap ||
-      webCallsThisResponse.length > (remainingResearchCalls > 0 ? maximumToolCalls : 0) ||
+      webCallsThisResponse.length > (webSearchAvailable ? maximumToolCalls : 0) ||
       estimatedCostUsd > maximumCallCostUsd + 0.000001
     ) {
       // Retain the conservative pending authorization. Replacing it with a
@@ -511,7 +629,6 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
       return { result: normalized, usage, consultedUrls: [...consultedUrls] };
     }
 
-    const functionResults: FunctionCallResult[] = [];
     for (const call of functionCalls) {
       const isMutation = call.name === "apply_patch";
       await options.onProgress({
@@ -521,21 +638,10 @@ export async function runRepositoryAgent(options: RunAgentOptions): Promise<RunA
           : `Repository tool: ${call.name}`,
         details: { tool: call.name },
       });
-
-      let value: unknown;
-      try {
-        const result = await executeRepositoryFunctionCall(options.workspace, call);
-        value = { ok: true, result };
-      } catch (error) {
-        value = {
-          ok: false,
-          error: error instanceof Error ? error.message : "Repository tool failed",
-        };
-      }
-      functionResults.push({ callId: call.call_id, value });
     }
+    const functionResults = await executeRepositoryFunctionCalls(options.workspace, functionCalls);
     input.push(...buildToolContinuation(response.output, functionResults));
   }
 
-  throw new Error("AI model-call limit reached before a structured result was produced");
+  throw new Error("AI did not produce a structured result within the bounded finalization policy");
 }

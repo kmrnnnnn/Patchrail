@@ -2,13 +2,8 @@ import "server-only";
 
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import {
-  aiRunEvents,
-  aiRuns,
-  billingAccounts,
-  githubInstallations,
-  repositories,
-} from "@/db/schema";
+import { aiRunEvents, aiRuns, githubInstallations, repositories } from "@/db/schema";
+import { customerEventMessage, customerRunFailure } from "@/runs/customer-presentation";
 
 const ACTIVE_RUNS = [
   "QUEUED",
@@ -42,7 +37,6 @@ export async function getDashboardData(workspaceId: string) {
         summary: aiRuns.summary,
         createdAt: aiRuns.createdAt,
         completedAt: aiRuns.completedAt,
-        actualCostUsd: aiRuns.actualCostUsd,
         githubPrUrl: aiRuns.githubPrUrl,
         githubPrNumber: aiRuns.githubPrNumber,
         repositoryId: repositories.id,
@@ -132,23 +126,62 @@ export async function getRepositoryDetail(workspaceId: string, repositoryId: str
   if (!repository) return null;
 
   const [lastRun] = await db
-    .select()
+    .select({
+      id: aiRuns.id,
+      status: aiRuns.status,
+      stage: aiRuns.stage,
+      summary: aiRuns.summary,
+      startingCommitSha: aiRuns.startingCommitSha,
+      detectedApis: aiRuns.detectedApis,
+      changedFiles: aiRuns.changedFiles,
+      verification: aiRuns.verification,
+      githubPrNumber: aiRuns.githubPrNumber,
+      githubPrUrl: aiRuns.githubPrUrl,
+      inputQuestion: aiRuns.inputQuestion,
+      errorCode: aiRuns.errorCode,
+      createdAt: aiRuns.createdAt,
+      completedAt: aiRuns.completedAt,
+    })
     .from(aiRuns)
     .where(and(eq(aiRuns.repositoryId, repositoryId), eq(aiRuns.workspaceId, workspaceId)))
     .orderBy(desc(aiRuns.createdAt))
     .limit(1);
 
-  return { ...repository, lastRun };
+  if (!lastRun) return { ...repository, lastRun: undefined };
+  const { errorCode, ...customerRun } = lastRun;
+  return {
+    ...repository,
+    lastRun: {
+      ...customerRun,
+      failureMessage:
+        lastRun.status === "FAILED" ? customerRunFailure(errorCode, lastRun.stage).message : null,
+    },
+  };
 }
 
 export async function getRunDetail(workspaceId: string, runId: string) {
   const [run] = await db
     .select({
-      run: aiRuns,
+      run: {
+        id: aiRuns.id,
+        status: aiRuns.status,
+        stage: aiRuns.stage,
+        startingCommitSha: aiRuns.startingCommitSha,
+        detectedApis: aiRuns.detectedApis,
+        research: aiRuns.research,
+        changedFiles: aiRuns.changedFiles,
+        verification: aiRuns.verification,
+        githubPrNumber: aiRuns.githubPrNumber,
+        githubPrUrl: aiRuns.githubPrUrl,
+        inputQuestion: aiRuns.inputQuestion,
+        errorCode: aiRuns.errorCode,
+        createdAt: aiRuns.createdAt,
+        startedAt: aiRuns.startedAt,
+        completedAt: aiRuns.completedAt,
+      },
       repository: {
         id: repositories.id,
         fullName: repositories.fullName,
-        htmlUrl: repositories.htmlUrl,
       },
     })
     .from(aiRuns)
@@ -158,37 +191,74 @@ export async function getRunDetail(workspaceId: string, runId: string) {
 
   if (!run) return null;
   const events = await db
-    .select()
+    .select({
+      id: aiRunEvents.id,
+      stage: aiRunEvents.stage,
+      kind: aiRunEvents.kind,
+      message: aiRunEvents.message,
+      createdAt: aiRunEvents.createdAt,
+    })
     .from(aiRunEvents)
     .where(eq(aiRunEvents.runId, runId))
     .orderBy(aiRunEvents.sequence);
-  return { ...run, events };
-}
-
-export async function getUsageData(workspaceId: string) {
-  const [billing] = await db
-    .select()
-    .from(billingAccounts)
-    .where(eq(billingAccounts.workspaceId, workspaceId))
-    .limit(1);
-
-  const runs = await db
-    .select({
-      id: aiRuns.id,
-      repositoryName: repositories.fullName,
-      status: aiRuns.status,
-      actualCostUsd: aiRuns.actualCostUsd,
-      estimatedCostUsd: aiRuns.estimatedCostUsd,
-      modelUsage: aiRuns.modelUsage,
-      createdAt: aiRuns.createdAt,
-    })
-    .from(aiRuns)
-    .innerJoin(repositories, eq(aiRuns.repositoryId, repositories.id))
-    .where(eq(aiRuns.workspaceId, workspaceId))
-    .orderBy(desc(aiRuns.createdAt))
-    .limit(50);
-
-  const spend = runs.reduce((sum, run) => sum + Number(run.actualCostUsd), 0);
-  const budget = Number(billing?.aiBudgetUsd ?? 0);
-  return { billing, runs, spend, budget, remaining: Math.max(0, budget - spend) };
+  const failure =
+    run.run.status === "FAILED" ? customerRunFailure(run.run.errorCode, run.run.stage) : null;
+  const verification = run.run.verification
+    ? {
+        status: run.run.verification.status,
+        integrityPassed: run.run.verification.integrityPassed,
+        integrityFindings: run.run.verification.integrityFindings,
+        commands: run.run.verification.commands.map((command) => ({
+          command: command.command,
+          exitCode: command.exitCode,
+          durationMs: command.durationMs,
+          timedOut: command.timedOut,
+          stdout: command.stdout,
+          stderr: command.stderr,
+        })),
+      }
+    : null;
+  return {
+    run: {
+      id: run.run.id,
+      status: run.run.status,
+      stage: run.run.stage,
+      startingCommitSha: run.run.startingCommitSha,
+      detectedApis: run.run.detectedApis.map((api) => ({
+        id: api.id,
+        provider: api.provider,
+        product: api.product,
+        status: api.status,
+        conclusion: api.conclusion,
+        files: api.files,
+        confidence: api.confidence,
+      })),
+      research: run.run.research.map((source) => ({
+        apiId: source.apiId,
+        url: source.url,
+        title: source.title,
+        summary: source.summary,
+        authoritative: source.authoritative,
+      })),
+      changedFiles: run.run.changedFiles.map((file) => ({
+        path: file.path,
+        operation: file.operation,
+        additions: file.additions,
+        deletions: file.deletions,
+      })),
+      verification,
+      githubPrNumber: run.run.githubPrNumber,
+      githubPrUrl: run.run.githubPrUrl,
+      failure,
+      inputQuestion: run.run.inputQuestion,
+      createdAt: run.run.createdAt,
+      startedAt: run.run.startedAt,
+      completedAt: run.run.completedAt,
+    },
+    repository: run.repository,
+    events: events.map((event) => ({
+      ...event,
+      message: customerEventMessage({ ...event, failure }),
+    })),
+  };
 }

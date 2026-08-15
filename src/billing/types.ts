@@ -31,8 +31,6 @@ export type BillingAccountView = {
   cancelAtPeriodEnd: boolean;
   paymentMethod: { brand: string; last4: string } | null;
   repositoryLimit: number;
-  aiBudgetUsd: string;
-  reconciledAt: string | null;
 };
 
 export type BillingPageData = {
@@ -55,28 +53,20 @@ export type UsageRun = {
   repositoryName: string;
   status: string;
   createdAt: string;
-  actualCostUsd: string;
-  estimatedCostUsd: string;
-  modelCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  webSearchCalls: number;
+  apisFound: number;
+  filesChanged: number;
+  hasDraftPr: boolean;
 };
 
 export type UsageSummary = {
   plan: BillingPlan;
   periodStart: string;
   periodEnd: string | null;
-  budgetUsd: string;
-  spentUsd: string;
-  reservedUsd: string;
-  remainingUsd: string;
   runs: number;
-  modelCalls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  webSearchCalls: number;
+  completedRuns: number;
+  activeRuns: number;
+  apisFound: number;
+  filesChanged: number;
+  draftPrs: number;
   recentRuns: UsageRun[];
 };

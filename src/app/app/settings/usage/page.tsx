@@ -15,7 +15,7 @@ export default async function UsagePage() {
       <PageHeader
         eyebrow="Settings"
         title="Usage"
-        description="See this workspace’s real AI spend, reservations, model usage, and per-run costs."
+        description="See this workspace’s Patchrail updates, outcomes, and recent repository activity."
       />
       <UsagePanel summary={usage} />
     </div>

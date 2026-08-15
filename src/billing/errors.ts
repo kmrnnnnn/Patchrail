@@ -33,6 +33,14 @@ export function getPublicBillingError(error: unknown): {
   status: number;
 } {
   if (error instanceof BillingError) {
+    if (error.code === "BUDGET_EXCEEDED") {
+      return {
+        code: error.code,
+        message:
+          "This workspace has no Patchrail update allowance available. Review or change the workspace plan before starting another update.",
+        status: error.status,
+      };
+    }
     return { code: error.code, message: error.message, status: error.status };
   }
 

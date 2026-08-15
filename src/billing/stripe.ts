@@ -802,8 +802,6 @@ function accountView(
         ? { brand: account.paymentMethodBrand, last4: account.paymentMethodLast4 }
         : null,
     repositoryLimit: definition.repositoryLimit,
-    aiBudgetUsd: account.aiBudgetUsd,
-    reconciledAt: account.reconciledAt?.toISOString() ?? null,
   };
 }
 

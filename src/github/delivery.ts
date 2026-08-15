@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Octokit } from "@octokit/rest";
 import type { ChangedFilePayload, VerificationResult } from "@/runs/types";
+import type { PatchrailPullRequestBody } from "@/github/pr-body";
 import { getInstallationOctokit } from "@/github/client";
 import { GitHubIntegrationError } from "@/github/errors";
 import {
@@ -322,7 +323,7 @@ export type DraftPullRequestDeliveryInput = {
   branchName: string;
   commitMessage: string;
   title: string;
-  body: string;
+  body: PatchrailPullRequestBody;
   changedFiles: ChangedFilePayload[];
   verification: VerificationResult;
 };

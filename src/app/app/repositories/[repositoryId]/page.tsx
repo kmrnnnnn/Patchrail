@@ -12,7 +12,7 @@ import {
   SubmitButton,
 } from "@/components/ui";
 import { getConfigurationStatus } from "@/lib/env";
-import { formatRelativeDate, formatUsd, shortSha } from "@/lib/format";
+import { formatRelativeDate, shortSha } from "@/lib/format";
 import { getRepositoryDetail } from "@/server/queries";
 import { disableRepositoryAction, enableRepositoryAction } from "@/server/repositories";
 import { getWorkspaceContext } from "@/server/session";
@@ -38,25 +38,25 @@ export default async function RepositoryPage({
 
   const configuration = getConfigurationStatus();
   const liveReady = configuration.github && configuration.ai && configuration.runner;
-  const configuredMaximum = Number(process.env.AI_MAX_RUN_COST_USD ?? 5);
-  const maximumCostUsd = Number.isFinite(configuredMaximum) ? configuredMaximum : 5;
   const run = repository.lastRun;
   const hasActiveRun = Boolean(run && run.status !== "SUCCEEDED" && run.status !== "FAILED");
   const accessAvailable =
     repository.accessState === "ACTIVE" && !repository.installationDisconnectedAt;
   const missingConfiguration = [
     !configuration.github && "GitHub App",
-    !configuration.ai && "OpenAI and AI pricing",
+    !configuration.ai && "analysis service",
     !configuration.runner && "verification runner",
   ].filter(Boolean);
   const runSummary = run
     ? run.status === "NEEDS_INPUT"
       ? (run.inputQuestion ?? "Patchrail needs a decision before it can continue.")
-      : run.status === "SUCCEEDED" && !run.githubPrUrl
-        ? run.detectedApis.length === 0
-          ? "No material external API integrations were found. No code change or Draft PR was required."
-          : "Detected API integrations appear current. No code change or Draft PR was required."
-        : (run.summary ?? run.errorMessage ?? run.stage.replaceAll("_", " "))
+      : run.status === "FAILED"
+        ? (run.failureMessage ?? "Patchrail could not complete this repository update.")
+        : run.status === "SUCCEEDED" && !run.githubPrUrl
+          ? run.detectedApis.length === 0
+            ? "No material external API integrations were found. No code change or Draft PR was required."
+            : "Detected API integrations appear current. No code change or Draft PR was required."
+          : (run.summary ?? run.stage.replaceAll("_", " "))
     : null;
 
   return (
@@ -87,7 +87,6 @@ export default async function RepositoryPage({
                 </form>
                 <StartRunButton
                   disabled={!liveReady || !accessAvailable || hasActiveRun}
-                  maximumCostUsd={maximumCostUsd}
                   repositoryId={repository.id}
                 />
               </>
@@ -122,9 +121,7 @@ export default async function RepositoryPage({
           <ShieldCheck aria-hidden="true" size={19} />
           <div>
             <strong>Live updates are not configured yet</strong>
-            <p>
-              {missingConfiguration.join(", ")} must be configured before paid AI work can start.
-            </p>
+            <p>{missingConfiguration.join(", ")} must be configured before an update can start.</p>
           </div>
         </div>
       ) : null}
@@ -236,8 +233,8 @@ export default async function RepositoryPage({
                   </dd>
                 </div>
                 <div>
-                  <dt>AI cost</dt>
-                  <dd>{formatUsd(run.actualCostUsd)}</dd>
+                  <dt>Files changed</dt>
+                  <dd>{run.changedFiles.length}</dd>
                 </div>
               </dl>
               {run.githubPrUrl ? (

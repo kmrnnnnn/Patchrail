@@ -3,7 +3,7 @@ import type {
   ParsedResponseFunctionToolCall,
   ParsedResponseOutputItem,
 } from "openai/resources/responses/responses";
-import { executeRepositoryFunctionCall } from "@/ai/agent";
+import { executeRepositoryFunctionCall, executeRepositoryFunctionCalls } from "@/ai/agent";
 import type { RepositoryWorkspace } from "@/ai/repository";
 import { buildToolContinuation, serializeToolResponseOutput } from "@/ai/tool-continuation";
 
@@ -167,5 +167,36 @@ describe("OpenAI Responses tool continuation", () => {
         [{ callId: "wrong_call", value: { ok: true } }],
       ),
     ).toThrow("Missing repository tool result for call call_a");
+  });
+
+  it("executes every function call returned in one response before continuing", async () => {
+    const reads: string[] = [];
+    const workspace = {
+      readFile: async (path: string) => {
+        reads.push(path);
+        return { path, content: path };
+      },
+    } as unknown as RepositoryWorkspace;
+    const calls = [
+      functionCall("call_a", "read_file", "src/a.ts"),
+      functionCall("call_b", "read_file", "src/b.ts"),
+    ];
+
+    const results = await executeRepositoryFunctionCalls(workspace, calls);
+
+    expect(reads).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(results).toEqual([
+      {
+        callId: "call_a",
+        value: { ok: true, result: expect.objectContaining({ path: "src/a.ts" }) },
+      },
+      {
+        callId: "call_b",
+        value: { ok: true, result: expect.objectContaining({ path: "src/b.ts" }) },
+      },
+    ]);
+    expect(
+      buildToolContinuation(calls, results).filter((item) => item.type === "function_call_output"),
+    ).toHaveLength(2);
   });
 });

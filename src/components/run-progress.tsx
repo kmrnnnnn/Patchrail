@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { Button, ButtonLink, Card, Field, StatusBadge, Textarea } from "@/components/ui";
-import { formatRelativeDate, formatUsd, shortSha } from "@/lib/format";
+import { formatRelativeDate, shortSha } from "@/lib/format";
 import { isTerminalRunStatus } from "@/runs/types";
 
 type RunDetail = {
@@ -24,7 +24,6 @@ type RunDetail = {
     id: string;
     status: string;
     stage: string;
-    summary: string | null;
     startingCommitSha: string | null;
     detectedApis: Array<{
       id: string;
@@ -39,10 +38,8 @@ type RunDetail = {
       apiId: string;
       url: string;
       title: string;
-      sourceType: string;
       summary: string;
       authoritative: boolean;
-      retrievedAt?: string;
     }>;
     changedFiles: Array<{ path: string; operation: string; additions: number; deletions: number }>;
     verification: null | {
@@ -58,25 +55,17 @@ type RunDetail = {
         stderr?: string;
       }>;
     };
-    modelUsage: Array<{
-      model: string;
-      inputTokens: number;
-      outputTokens: number;
-      webSearchCalls: number;
-      estimatedCostUsd: number;
-    }>;
-    actualCostUsd: string;
     githubPrNumber: number | null;
     githubPrUrl: string | null;
-    errorMessage: string | null;
-    errorCode: string | null;
+    failure: { title: string; message: string } | null;
     inputQuestion: string | null;
     createdAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
   };
-  repository: { id: string; fullName: string; htmlUrl: string };
+  repository: { id: string; fullName: string };
   events: Array<{
     id: number;
-    sequence: number;
     stage: string;
     kind: string;
     message: string;
@@ -156,6 +145,43 @@ function titleForRun(detail: RunDetail): string {
   return "API update run";
 }
 
+const UPDATE_STATUSES = new Set([
+  "MIGRATION_REQUIRED",
+  "DEPRECATED_USAGE",
+  "BREAKING_CHANGE_RELEVANT",
+]);
+
+function formatDuration(detail: RunDetail): string {
+  if (!detail.run.completedAt) return detail.run.status === "QUEUED" ? "Queued" : "In progress";
+
+  const durationMs = Math.max(
+    0,
+    new Date(detail.run.completedAt).getTime() -
+      new Date(detail.run.startedAt ?? detail.run.createdAt).getTime(),
+  );
+  const totalSeconds = Math.round(durationMs / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function verificationFact(detail: RunDetail): string {
+  if (detail.run.verification?.status === "PASSED") return "Passed";
+  if (detail.run.verification?.status === "FAILED") return "Failed";
+  if (detail.run.verification?.status === "NO_COMMANDS") return "Not required";
+  if (detail.run.status === "SUCCEEDED") return "Not required";
+  if (detail.run.status === "FAILED") return "Not reached";
+  return "Pending";
+}
+
+function draftPrFact(detail: RunDetail): string {
+  if (detail.run.githubPrNumber) return `#${detail.run.githubPrNumber}`;
+  if (detail.run.status === "SUCCEEDED") return "Not needed";
+  if (detail.run.status === "FAILED") return "Not created";
+  return "Pending";
+}
+
 export function RunProgress({ initial }: { initial: RunDetail }) {
   const router = useRouter();
   const [detail, setDetail] = useState(initial);
@@ -219,12 +245,9 @@ export function RunProgress({ initial }: { initial: RunDetail }) {
         "No PR needed",
       ]
     : stages.map((stage) => stage.label);
-  const totalModelCalls = detail.run.modelUsage.length;
-  const totalTokens = detail.run.modelUsage.reduce(
-    (total, usage) => total + usage.inputTokens + usage.outputTokens,
-    0,
-  );
-  const models = [...new Set(detail.run.modelUsage.map((usage) => usage.model))];
+  const updatedApis = detail.run.githubPrUrl
+    ? detail.run.detectedApis.filter((api) => UPDATE_STATUSES.has(api.status)).length
+    : 0;
 
   async function manualRefresh() {
     setManualRefreshing(true);
@@ -351,8 +374,13 @@ export function RunProgress({ initial }: { initial: RunDetail }) {
         <div className="run-alert run-alert--error" role="alert">
           <AlertTriangle aria-hidden="true" size={20} />
           <div>
-            <strong>{detail.run.errorCode?.replaceAll("_", " ") ?? "Run failed"}</strong>
-            <p>{detail.run.errorMessage ?? "The run stopped before it could complete."}</p>
+            <strong>
+              {detail.run.failure?.title ?? "Patchrail could not complete this update"}
+            </strong>
+            <p>
+              {detail.run.failure?.message ??
+                "The run stopped before it could complete. No Draft PR was created."}
+            </p>
             <div className="run-alert__actions">
               <Button loading={recoveryAction === "retry"} onClick={retryRun} size="sm">
                 <RefreshCw aria-hidden="true" size={14} /> Retry as a new run
@@ -497,27 +525,25 @@ export function RunProgress({ initial }: { initial: RunDetail }) {
                 <dd>{detail.run.detectedApis.length}</dd>
               </div>
               <div>
+                <dt>APIs updated</dt>
+                <dd>{updatedApis}</dd>
+              </div>
+              <div>
                 <dt>Files changed</dt>
                 <dd>{detail.run.changedFiles.length}</dd>
               </div>
               <div>
-                <dt>Model calls</dt>
-                <dd>{totalModelCalls}</dd>
+                <dt>Verification</dt>
+                <dd>{verificationFact(detail)}</dd>
               </div>
               <div>
-                <dt>Model tokens</dt>
-                <dd>{new Intl.NumberFormat("en-US").format(totalTokens)}</dd>
+                <dt>Draft PR</dt>
+                <dd>{draftPrFact(detail)}</dd>
               </div>
               <div>
-                <dt>AI cost</dt>
-                <dd>{formatUsd(detail.run.actualCostUsd)}</dd>
+                <dt>Duration</dt>
+                <dd>{formatDuration(detail)}</dd>
               </div>
-              {models.length > 0 ? (
-                <div>
-                  <dt>Model</dt>
-                  <dd className="detail-list__model">{models.join(", ")}</dd>
-                </div>
-              ) : null}
             </dl>
           </Card>
         </aside>

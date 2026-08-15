@@ -38,17 +38,30 @@ export async function startAiRun(input: {
       );
     }
     if (error instanceof BillingError) {
-      const code =
-        error.code === "BUDGET_EXCEEDED"
-          ? "BUDGET_EXCEEDED"
-          : error.message === "Repository not found."
-            ? "REPOSITORY_NOT_FOUND"
-            : error.message === "Enable Patchrail first."
-              ? "REPOSITORY_NOT_ENABLED"
-              : error.message === "GitHub repository access is unavailable."
-                ? "REPOSITORY_ACCESS_UNAVAILABLE"
-                : error.code;
-      throw new RunStartError(error.message, code, error.status);
+      if (error.code === "BUDGET_EXCEEDED") {
+        throw new RunStartError(
+          "This workspace has no Patchrail update allowance available. Review or change the workspace plan before starting another update.",
+          "PLAN_ALLOWANCE_EXHAUSTED",
+          error.status,
+        );
+      }
+      if (error.message === "Repository not found.") {
+        throw new RunStartError(error.message, "REPOSITORY_NOT_FOUND", error.status);
+      }
+      if (error.message === "Enable Patchrail first.") {
+        throw new RunStartError(error.message, "REPOSITORY_NOT_ENABLED", error.status);
+      }
+      if (error.message === "GitHub repository access is unavailable.") {
+        throw new RunStartError(error.message, "REPOSITORY_ACCESS_UNAVAILABLE", error.status);
+      }
+      if (error.code === "PLAN_LIMIT_REACHED") {
+        throw new RunStartError(error.message, error.code, error.status);
+      }
+      throw new RunStartError(
+        "Patchrail could not confirm this workspace’s update allowance. Refresh the repository before trying again.",
+        "PLAN_ALLOWANCE_UNAVAILABLE",
+        error.status,
+      );
     }
     throw error;
   }

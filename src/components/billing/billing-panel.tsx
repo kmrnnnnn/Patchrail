@@ -285,7 +285,7 @@ export function BillingPanel({ initialData }: { initialData: BillingPageData }) 
         <Card className={styles.currentPlan}>
           <CardHeader
             title="Current plan"
-            description="Workspace limits and AI allowance"
+            description="Workspace plan and repository allowance"
             action={
               <StatusBadge dot tone={account.plan === "PRO" ? "accent" : "neutral"}>
                 {account.planName}
@@ -309,9 +309,9 @@ export function BillingPanel({ initialData }: { initialData: BillingPageData }) 
             <dl className={styles.limitList}>
               <div>
                 <dt>
-                  <Gauge aria-hidden="true" size={17} /> AI budget
+                  <Gauge aria-hidden="true" size={17} /> Repository updates
                 </dt>
-                <dd>${Number(account.aiBudgetUsd).toFixed(2)} / period</dd>
+                <dd>Included update allowance</dd>
               </div>
               <div>
                 <dt>
@@ -337,7 +337,7 @@ export function BillingPanel({ initialData }: { initialData: BillingPageData }) 
               </p>
               <ul className={styles.features}>
                 <li>
-                  <Check aria-hidden="true" size={16} /> Larger monthly AI budget
+                  <Check aria-hidden="true" size={16} /> Monthly Patchrail update allowance
                 </li>
                 <li>
                   <Check aria-hidden="true" size={16} /> More enabled repositories

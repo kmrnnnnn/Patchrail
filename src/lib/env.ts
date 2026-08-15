@@ -91,7 +91,9 @@ export const aiEnvSchema = z.object({
   OPENAI_WEB_SEARCH_USD_PER_CALL: positiveNumber,
   OPENAI_MAX_WEB_SEARCH_CALLS_PER_RESPONSE: positiveInt.default(4),
   AI_MAX_RUN_COST_USD: positiveNumber,
-  AI_MAX_MODEL_CALLS: positiveInt.default(8),
+  // Run-wide hard ceiling: normal analysis (14), one bounded clarification
+  // continuation (4), and the single bounded verification repair (4).
+  AI_MAX_MODEL_CALLS: z.coerce.number().int().min(1).max(22).default(22),
   AI_MAX_RESEARCH_CALLS: positiveInt.default(12),
   AI_MAX_REPOSITORY_READS: positiveInt.default(80),
   AI_MAX_FILES_WRITTEN: positiveInt.default(20),

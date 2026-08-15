@@ -26,15 +26,14 @@ export async function POST(request: Request, context: { params: Promise<{ runId:
         const exhausted = await failExhaustedPausedRun({
           workspaceId: workspace.id,
           runId,
-          message:
-            "The run used its full AI cost authorization and could not resume after clarification",
+          message: "The run could not resume because its Patchrail allowance was exhausted",
         });
         if (exhausted === "FAILED") {
           return Response.json(
             {
               error:
-                "This run used its full AI cost authorization. It has been closed; start a new run to try again.",
-              code: "BUDGET_EXCEEDED",
+                "This run has used its available Patchrail allowance. It has been closed; review or change the workspace plan before starting a new run.",
+              code: "PLAN_ALLOWANCE_EXHAUSTED",
             },
             { status: 402 },
           );
