@@ -1,5 +1,6 @@
 import os from "node:os";
 import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { ZodError } from "zod";
 import { db } from "../src/db/client";
 import { aiRuns, verificationJobs, workerHeartbeats, workspaces } from "../src/db/schema";
 import { readAiEnv, readGithubAppEnv, readPlanEnv, readVerificationEnv } from "../src/lib/env";
@@ -51,6 +52,31 @@ function validateWorkerConfiguration(): void {
   readAiEnv();
   readPlanEnv();
   readVerificationEnv();
+}
+
+function startupFailureMetadata(error: unknown): {
+  errorName: string;
+  validationIssues?: string;
+  causeCode?: string;
+} {
+  if (error instanceof ZodError) {
+    const validationIssues = [
+      ...new Set(
+        error.issues.map((issue) => `${issue.path.join(".") || "configuration"}:${issue.code}`),
+      ),
+    ]
+      .slice(0, 12)
+      .join(",");
+    return { errorName: error.name, validationIssues };
+  }
+
+  if (error instanceof Error) {
+    const code = "code" in error && typeof error.code === "string" ? error.code : undefined;
+    const causeCode = code?.match(/^[A-Z0-9_]{1,40}$/) ? code : undefined;
+    return { errorName: error.name, causeCode };
+  }
+
+  return { errorName: "UnknownError" };
 }
 
 async function heartbeat() {
@@ -221,7 +247,11 @@ async function main(): Promise<void> {
   logger.info("worker_stopped", { workerId });
 }
 
-void main().catch(() => {
-  logger.error("worker_start_failed", { workerId, errorCode: "WORKER_START" });
+void main().catch((error: unknown) => {
+  logger.error("worker_start_failed", {
+    workerId,
+    errorCode: "WORKER_START",
+    ...startupFailureMetadata(error),
+  });
   process.exitCode = 1;
 });
